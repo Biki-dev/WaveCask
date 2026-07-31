@@ -20,3 +20,15 @@ class RawEventResponse(RawEventCreate):
 
     class Config:
         from_attributes = True
+
+class SessionSummaryResponse(BaseModel):
+    session_id: str
+    start_time: datetime
+    end_time: datetime
+    duration_seconds: float
+    is_long_session: bool
+    avg_position_seconds: float
+    video_count: int
+
+    class Config:
+        from_attributes = True

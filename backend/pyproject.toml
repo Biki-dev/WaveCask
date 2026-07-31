@@ -5,6 +5,7 @@ description = "WaveCask Backend"
 readme = ""
 requires-python = ">=3.13"
 dependencies = [
+    "apscheduler>=3.11.3",
     "fastapi[standard]>=0.141.1",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
