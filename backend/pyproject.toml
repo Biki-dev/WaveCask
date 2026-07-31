@@ -1,0 +1,12 @@
+[project]
+name = "wavecask-backend"
+version = "0.1.0"
+description = "WaveCask Backend"
+readme = ""
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.141.1",
+    "psycopg2-binary>=2.9.12",
+    "pydantic>=2.13.4",
+    "sqlalchemy>=2.0.51",
+]

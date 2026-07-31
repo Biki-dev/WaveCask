@@ -55,7 +55,7 @@ function detectAutoplay() {
     return isAutoplayNow;
 }
 
-// Log event data to the console
+// Log event data to the console and send it to the backend
 function logEvent(eventType, position, duration, isAuto = false) {
     const data = {
         video_id: currentVideoId,
@@ -71,6 +71,15 @@ function logEvent(eventType, position, duration, isAuto = false) {
         timestamp: new Date().toISOString()
     };
     console.log('WAVECASK EVENT:', data);
+
+    // Send data to the backend API
+    fetch('http://localhost:8000/api/rawevents', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    }).catch(err => console.error('Failed to send event to backend:', err));
 }
 
 // Attach event listeners to the video element
