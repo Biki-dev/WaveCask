@@ -1,6 +1,7 @@
 import logging
 from sqlalchemy import text
 from src.database import SessionLocal
+from src.tracks_service import classify_pending_tracks
 
 logger = logging.getLogger(__name__)
 
@@ -45,5 +46,83 @@ def sync_sessions_nightly():
     except Exception as e:
         db.rollback()
         logger.error(f"Error during nightly sessions sync: {e}")
+    finally:
+        db.close()
+
+
+def classify_tracks_nightly():
+    """
+    Two-phase nightly job:
+      1. Backfill track stubs from raw_events (catches any events that arrived
+         before the upsert hook existed, or that had no video_id at the time).
+      2. Run 3-layer classification on all pending tracks.
+    """
+    logger.info("Starting nightly track pipeline...")
+    db = SessionLocal()
+    try:
+        # ── Phase 1: backfill stubs for any raw_events not yet in tracks ──────
+        backfill_query = text("""
+            INSERT INTO tracks (
+                video_id,
+                raw_title,
+                cache_key,
+                channel,
+                duration_seconds,
+                is_music,
+                classification_source,
+                artist,
+                song,
+                genre,
+                release_year,
+                replay_count,
+                early_skipped,
+                processing_status,
+                created_at,
+                updated_at
+            )
+            SELECT DISTINCT ON (video_id)
+                video_id,
+                title                                              AS raw_title,
+                regexp_replace(lower(title), '[^a-z0-9 ]', '', 'g') AS cache_key,
+                channel,
+                video_duration_seconds                             AS duration_seconds,
+                false                                              AS is_music,
+                NULL                                               AS classification_source,
+                'Unknown'                                          AS artist,
+                'Unknown'                                          AS song,
+                'Unknown'                                          AS genre,
+                'Unknown'                                          AS release_year,
+                0                                                  AS replay_count,
+                false                                              AS early_skipped,
+                'pending_classification'                           AS processing_status,
+                NOW()                                              AS created_at,
+                NOW()                                              AS updated_at
+            FROM raw_events
+            WHERE video_id IS NOT NULL
+            ORDER BY video_id, timestamp DESC
+            ON CONFLICT (video_id) DO UPDATE SET
+                -- Metadata columns: always keep fresh from raw_events
+                raw_title        = EXCLUDED.raw_title,
+                cache_key        = EXCLUDED.cache_key,
+                channel          = EXCLUDED.channel,
+                duration_seconds = COALESCE(EXCLUDED.duration_seconds, tracks.duration_seconds),
+                updated_at       = NOW()
+                --     Classification columns intentionally excluded:
+                --     is_music, classification_source, processing_status,
+                --     artist, song, genre, release_year
+                --     are ONLY written by the classifier pipeline.
+        """)
+
+        db.execute(backfill_query)
+        db.commit()
+        logger.info("Phase 1 done: track stubs backfilled from raw_events.")
+
+        # ── Phase 2: classify all pending tracks ──────────────────────────────
+        count = classify_pending_tracks(db)
+        logger.info(f"Phase 2 done: classified {count} pending tracks.")
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error during nightly track pipeline: {e}")
     finally:
         db.close()

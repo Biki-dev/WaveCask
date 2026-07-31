@@ -15,6 +15,7 @@ services:
         condition: service_healthy
     volumes:
       - ./src:/app/src
+      - ./models:/app/models
     restart: unless-stopped
 
   db:

@@ -32,3 +32,27 @@ class SessionSummaryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class TrackResponse(BaseModel):
+    video_id: str
+    raw_title: str
+    cache_key: str
+    channel: str
+    duration_seconds: Optional[float]
+    is_music: bool
+    classification_source: Optional[str]
+    artist: str
+    song: str
+    genre: str
+    release_year: str
+    audio_embedding: Optional[str]
+    implicit_score: Optional[float]
+    replay_count: int
+    max_position_reached: Optional[float]
+    early_skipped: bool
+    processing_status: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

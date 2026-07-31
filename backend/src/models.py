@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from src.database import Base
 
 class RawEvent(Base):
@@ -29,10 +30,42 @@ class SessionSummary(Base):
     avg_position_seconds = Column(Float, nullable=False)
     video_count = Column(Integer, nullable=False)
 
-
     raw_events = relationship(
         "RawEvent",
         primaryjoin="RawEvent.session_id == SessionSummary.session_id",
         foreign_keys="[RawEvent.session_id]",
-        viewonly=True
+        viewonly=True,
+    )
+
+
+class Track(Base):
+    __tablename__ = "tracks"
+
+    video_id = Column(String, primary_key=True, index=True)
+
+    raw_title = Column(String, nullable=False)
+    cache_key = Column(String, index=True, nullable=False) 
+    channel = Column(String, nullable=False)
+    duration_seconds = Column(Float, nullable=True)
+    is_music = Column(Boolean, nullable=False, default=False)
+    classification_source = Column(String, nullable=True)  # "layer1", "layer2", "layer3"
+    artist = Column(String, nullable=False, default="Unknown")
+    song = Column(String, nullable=False, default="Unknown")
+    genre = Column(String, nullable=False, default="Unknown")
+    release_year = Column(String, nullable=False, default="Unknown")
+    audio_embedding = Column(Text, nullable=True, default=None)
+    implicit_score = Column(Float, nullable=True, default=None)
+    replay_count = Column(Integer, nullable=False, default=0)
+    max_position_reached = Column(Float, nullable=True, default=None)
+    early_skipped = Column(Boolean, nullable=False, default=False)
+    # Pipeline lifecycle
+    processing_status = Column(
+        String, nullable=False, default="pending_classification", index=True
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
