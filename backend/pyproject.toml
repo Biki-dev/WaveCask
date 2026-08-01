@@ -3,14 +3,19 @@ name = "wavecask-backend"
 version = "0.1.0"
 description = "WaveCask Backend"
 readme = ""
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
     "apscheduler>=3.11.3",
     "fastapi[standard]>=0.141.1",
     "google-api-python-client>=2.198.0",
+    "google-genai>=2.16.0",
     "librosa>=0.11.0",
+    "openai>=2.52.0",
+    "openl3>=0.4.2",
+    "pgvector>=0.3.6",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
+    "soundfile>=0.14.0",
     "sqlalchemy>=2.0.51",
     "torch>=2.7.0",
     "yt-dlp>=2026.7.4",

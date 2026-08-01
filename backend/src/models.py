@@ -1,6 +1,11 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+try:
+    from pgvector.sqlalchemy import Vector
+    _has_pgvector = True
+except ImportError:
+    _has_pgvector = False
 from src.database import Base
 
 class RawEvent(Base):
@@ -53,7 +58,7 @@ class Track(Base):
     song = Column(String, nullable=False, default="Unknown")
     genre = Column(String, nullable=False, default="Unknown")
     release_year = Column(String, nullable=False, default="Unknown")
-    audio_embedding = Column(Text, nullable=True, default=None)
+    audio_embedding = Column(Vector(512) if _has_pgvector else Text, nullable=True, default=None)
     implicit_score = Column(Float, nullable=True, default=None)
     replay_count = Column(Integer, nullable=False, default=0)
     max_position_reached = Column(Float, nullable=True, default=None)
@@ -69,3 +74,15 @@ class Track(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class TrackMetadata(Base):
+    __tablename__ = "metadata"
+
+    cache_key = Column(String, primary_key=True, index=True)
+    raw_title = Column(String, nullable=False)
+    artist = Column(String, nullable=False, default="Unknown")
+    song = Column(String, nullable=False, default="Unknown")
+    genre = Column(String, nullable=False, default="Unknown")
+    release_year = Column(String, nullable=False, default="Unknown")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

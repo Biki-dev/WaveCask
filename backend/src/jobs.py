@@ -1,7 +1,22 @@
+"""
+nightly job
+ ├── Phase 1 · backfill stubs from raw_events
+ ├── Phase 2 · classify_pending_tracks  (L1→L2→L3)  → status='classified'
+ └── Phase 3 · embed_classified_tracks
+              query: is_music=True AND status='classified'
+              for each track:
+                ├── download 5-sec audio clip (yt-dlp, shared audio_utils)
+                ├── run OpenL3 → 512-dim vector (mean-pooled over frames)
+                ├── store in audio_embedding (pgvector literal '[0.x, ...]')
+                ├── set processing_status = 'embedding_done'
+                └── on ANY error → status = 'failed'  +  temp file cleaned up
+"""
+
+
 import logging
 from sqlalchemy import text
 from src.database import SessionLocal
-from src.tracks_service import classify_pending_tracks
+from src.tracks_service import classify_pending_tracks, embed_classified_tracks, enrich_completed_tracks
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +67,14 @@ def sync_sessions_nightly():
 
 def classify_tracks_nightly():
     """
-    Two-phase nightly job:
+    Three-phase nightly job:
       1. Backfill track stubs from raw_events (catches any events that arrived
          before the upsert hook existed, or that had no video_id at the time).
       2. Run 3-layer classification on all pending tracks.
+      3. Generate OpenL3 audio embeddings for all newly confirmed music tracks
+         (is_music=True, processing_status='classified').
+      4. Enrich metadata via LLM for all newly embedded music tracks
+         (is_music=True, processing_status='embedding_done').
     """
     logger.info("Starting nightly track pipeline...")
     db = SessionLocal()
@@ -121,8 +140,17 @@ def classify_tracks_nightly():
         count = classify_pending_tracks(db)
         logger.info(f"Phase 2 done: classified {count} pending tracks.")
 
+        # ── Phase 3: embed confirmed music tracks (is_music=True, classified) ─
+        embedded = embed_classified_tracks(db)
+        logger.info(f"Phase 3 done: embedded {embedded} music tracks.")
+
+        # ── Phase 4: enrich metadata via LLM (is_music=True, embedding_done) ──
+        enriched = enrich_completed_tracks(db)
+        logger.info(f"Phase 4 done: enriched {enriched} music tracks.")
+
     except Exception as e:
         db.rollback()
         logger.error(f"Error during nightly track pipeline: {e}")
     finally:
         db.close()
+

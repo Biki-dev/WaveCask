@@ -10,6 +10,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://wavecask_user:wavecask_password@db:5432/wavecask_db
+      PYTHONUNBUFFERED: "1"
     depends_on:
       db:
         condition: service_healthy
@@ -19,7 +20,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: raw_events_db
     env_file:
       - .env

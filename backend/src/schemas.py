@@ -1,6 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
+import json
 
 class RawEventCreate(BaseModel):
     video_id: Optional[str] = None
@@ -45,7 +46,7 @@ class TrackResponse(BaseModel):
     song: str
     genre: str
     release_year: str
-    audio_embedding: Optional[str]
+    audio_embedding: Optional[list[float]] = None
     implicit_score: Optional[float]
     replay_count: int
     max_position_reached: Optional[float]
@@ -53,6 +54,20 @@ class TrackResponse(BaseModel):
     processing_status: str
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("audio_embedding", mode="before")
+    @classmethod
+    def _parse_pgvector(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            stripped = v.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                return [float(x) for x in stripped[1:-1].split(",") if x.strip()]
+            return json.loads(stripped)
+        raise ValueError(f"Cannot parse audio_embedding value: {v!r}")
 
     class Config:
         from_attributes = True

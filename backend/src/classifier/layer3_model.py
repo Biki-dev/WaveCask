@@ -7,11 +7,11 @@ Architecture matches the training notebook exactly:
   - Output: logits for 2 classes → argmax → label_to_idx lookup
 
 Inference pipeline:
-  1. Download YouTube audio via yt-dlp (best audio stream, m4a/webm)
-  2. Load + resample to 16 kHz mono with librosa
-  3. Compute log-mel spectrogram (same params as training)
+  1. Download YouTube audio via yt-dlp  (shared: audio_utils.download_audio)
+  2. Load + resample to 16 kHz mono     (shared: audio_utils.audio_to_logmel)
+  3. Compute log-mel spectrogram
   4. Run AudioCNN forward pass
-  5. Delete temp audio file
+  5. Delete temp audio file             (handled in finally block)
   6. Return (is_music: bool, "layer3")
 
 Environment variables:
@@ -25,21 +25,14 @@ Returns (None, "") if:
 """
 
 import os
-import uuid
 import logging
+import shutil
 import tempfile
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from src.classifier.audio_utils import download_audio, audio_to_logmel, N_MELS
 
-# Audio Config
-TARGET_SR   = 16_000
-N_MELS      = 64
-N_FFT       = 1024
-HOP_LENGTH  = 320
-FMIN        = 20
-FMAX        = 8_000
-EPS         = 1e-6
+logger = logging.getLogger(__name__)
 
 # label_to_idx = {"music": 0, "speech": 1}
 MUSIC_CLASS_IDX = 0
@@ -87,70 +80,6 @@ def _build_audio_cnn():
 
     return AudioCNN
 
-# Download and convert YouTube audio to WAV using yt-dlp + ffmpeg
-
-def _download_audio(video_id: str, out_dir: str) -> Optional[str]:
-    try:
-        import yt_dlp
-
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        out_template = os.path.join(out_dir, f"{video_id}.%(ext)s")
-
-        ydl_opts = {
-            "format": "bestaudio/best",
-            "outtmpl": out_template,
-            "quiet": True,
-            "no_warnings": True,
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "wav",
-                "preferredquality": "192",
-            }],
-            "noplaylist": True,
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.extract_info(url, download=True)
-            downloaded = os.path.join(out_dir, f"{video_id}.wav")
-
-        if os.path.exists(downloaded):
-            logger.info(f"L3: Downloaded and converted audio → {downloaded}")
-            return downloaded
-
-        logger.warning(f"L3: yt-dlp completed but WAV file not found for {video_id}")
-        return None
-
-    except Exception as e:
-        logger.error(f"L3: Audio download/conversion failed for {video_id}: {e}")
-        return None
-
-
-
-def _audio_to_logmel(file_path: str):
-    """
-    Load audio from file, compute log-mel spectrogram.
-    Returns numpy array of shape [N_MELS, time], float32.
-    """
-    import librosa
-    import numpy as np
-
-    audio, _ = librosa.load(file_path, sr=TARGET_SR, mono=True)
-    if audio is None or len(audio) == 0:
-        raise ValueError(f"Empty audio file: {file_path}")
-
-    mel = librosa.feature.melspectrogram(
-        y=audio,
-        sr=TARGET_SR,
-        n_fft=N_FFT,
-        hop_length=HOP_LENGTH,
-        n_mels=N_MELS,
-        fmin=FMIN,
-        fmax=FMAX,
-        power=2.0,
-    )
-    logmel = librosa.power_to_db(mel, ref=np.max)
-    logmel = (logmel - logmel.mean()) / (logmel.std() + EPS)
-    return logmel.astype(np.float32)
 
 
 def classify(
@@ -192,16 +121,16 @@ def classify(
 
         model.eval()
         
-        # Download audio to a temporary directory
+        # Download 30 seconds of audio to a temporary directory (layer3 needs a representative snippet for CNN)
         tmp_dir = tempfile.mkdtemp(prefix="wavecask_l3_")
-        audio_file = _download_audio(video_id, tmp_dir)
+        audio_file = download_audio(video_id, tmp_dir, clip_seconds=30)
 
         if audio_file is None:
             logger.warning(f"L3: Could not download audio for {video_id} — skipping.")
             return None, ""
 
         # Convert audio to log-mel spectrogram
-        logmel = _audio_to_logmel(audio_file)
+        logmel = audio_to_logmel(audio_file)
         x = torch.tensor(logmel, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
         # shape: [1, 1, N_MELS, time]
 
@@ -228,7 +157,6 @@ def classify(
                 pass
         if tmp_dir and os.path.isdir(tmp_dir):
             try:
-                import shutil
                 shutil.rmtree(tmp_dir, ignore_errors=True)
             except Exception:
                 pass
