@@ -17,6 +17,7 @@ from src import models
 from src.classifier.pipeline import run_pipeline
 from src.classifier.audio_embedding import extract_and_store_embedding
 from src.classifier.metadata_enrichment import enrich_track_metadata
+from src.playlists_service import create_mood_playlists
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,15 @@ def _compute_implicit_score(
     return round(max(0.0, min(score, 1.0)), 4)
 
 
+def _refresh_mood_playlists_if_ready(db: Session) -> None:
+    try:
+        playlists = create_mood_playlists(db)
+        if playlists:
+            logger.info("Mood playlists refreshed after track update: %s", len(playlists))
+    except Exception as exc:
+        logger.warning("Failed to refresh mood playlists after track update: %s", exc)
+
+
 def upsert_track_from_event(db: Session, event: models.RawEvent) -> None:
     if not event.video_id:
         return
@@ -61,6 +71,7 @@ def upsert_track_from_event(db: Session, event: models.RawEvent) -> None:
         if event.video_duration_seconds is not None:
             existing.duration_seconds = event.video_duration_seconds
         db.commit()
+        _refresh_mood_playlists_if_ready(db)
         return
 
     track = models.Track(
@@ -73,6 +84,7 @@ def upsert_track_from_event(db: Session, event: models.RawEvent) -> None:
     db.add(track)
     db.commit()
     logger.info(f"New track stub created: video_id={event.video_id}")
+    _refresh_mood_playlists_if_ready(db)
 
 
 
@@ -92,6 +104,7 @@ def classify_pending_tracks(db: Session) -> int:
 
     for track in pending:
         try:
+            logger.debug(f"Classifying video_id={track.video_id} ...")
             result = run_pipeline(
                 video_id=track.video_id,
                 raw_title=track.raw_title,
@@ -108,8 +121,9 @@ def classify_pending_tracks(db: Session) -> int:
             track.processing_status = "classified"
 
             db.commit()
+            _refresh_mood_playlists_if_ready(db)
             processed += 1
-            logger.info(
+            logger.debug(
                 f"Classified video_id={track.video_id}: "
                 f"is_music={result.is_music} source={result.classification_source}"
             )
@@ -140,11 +154,12 @@ def embed_classified_tracks(db: Session) -> int:
     succeeded = 0
 
     for track in candidates:
-        logger.info(f"Embedding video_id={track.video_id} ...")
+        logger.debug(f"Embedding video_id={track.video_id} ...")
         ok = extract_and_store_embedding(track.video_id, db)
         if ok:
             succeeded += 1
-            logger.info(f"Embedding done: video_id={track.video_id}")
+            logger.debug(f"Embedding done: video_id={track.video_id}")
+            _refresh_mood_playlists_if_ready(db)
         else:
             logger.warning(f"Embedding failed: video_id={track.video_id}")
 
@@ -172,7 +187,7 @@ def enrich_completed_tracks(db: Session) -> int:
     succeeded = 0
 
     for track in candidates:
-        logger.info(f"Enriching video_id={track.video_id} (cache_key={track.cache_key})...")
+        logger.debug(f"Enriching video_id={track.video_id} (cache_key={track.cache_key})...")
         try:
             # Check if cache_key exists in metadata table
             meta_record = (
@@ -182,13 +197,14 @@ def enrich_completed_tracks(db: Session) -> int:
             )
 
             if meta_record:
-                logger.info(f"Enrichment: Found cached metadata for cache_key={track.cache_key}")
+                logger.debug(f"Enrichment: Found cached metadata for cache_key={track.cache_key}")
                 track.artist = meta_record.artist
                 track.song = meta_record.song
                 track.genre = meta_record.genre
                 track.release_year = meta_record.release_year
                 track.processing_status = "completed"
                 db.commit()
+                _refresh_mood_playlists_if_ready(db)
                 succeeded += 1
                 continue
 
@@ -218,8 +234,9 @@ def enrich_completed_tracks(db: Session) -> int:
                 )
                 db.add(new_meta)
                 db.commit()
+                _refresh_mood_playlists_if_ready(db)
                 succeeded += 1
-                logger.info(f"Enrichment: Saved metadata and updated track for video_id={track.video_id}")
+                logger.debug(f"Enrichment: Saved metadata and updated track for video_id={track.video_id}")
             else:
                 raise ValueError("Enrichment API returned failure.")
 
@@ -281,6 +298,7 @@ def refresh_implicit_track_scores(db: Session) -> int:
         updated += 1
 
     db.commit()
+    _refresh_mood_playlists_if_ready(db)
     logger.info(f"Implicit score refresh complete. Updated {updated}/{len(rows)} tracks.")
     return updated
 

@@ -14,6 +14,7 @@ from src import models, schemas
 from src.database import engine, get_db, ensure_pgvector_extension, ensure_vector_column, ensure_analytics_columns
 from src.jobs import sync_sessions_nightly, classify_tracks_nightly
 from src.tracks_service import upsert_track_from_event, embed_classified_tracks, enrich_completed_tracks, enrich_single_track
+from src.playlists_service import create_mix_playlist, get_playlist as get_playlist_record, list_playlists as list_playlist_records
 from src.classifier.audio_embedding import extract_and_store_embedding
 
 
@@ -162,6 +163,39 @@ def trigger_single_metadata_enrichment(video_id: str, background_tasks: Backgrou
         )
     background_tasks.add_task(enrich_single_track, video_id, db)
     return {"message": f"Metadata enrichment job started for video_id={video_id}"}
+
+
+@app.get("/api/playlists", response_model=list[schemas.PlaylistSummaryResponse])
+def list_playlists(db: Session = Depends(get_db)):
+    return list_playlist_records(db)
+
+
+@app.get("/api/playlists/{playlist_id}", response_model=schemas.PlaylistResponse)
+def get_playlist(playlist_id: int, db: Session = Depends(get_db)):
+    playlist = get_playlist_record(db, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return playlist
+
+
+@app.post("/api/playlists/mix", response_model=schemas.PlaylistResponse, status_code=status.HTTP_201_CREATED)
+def create_mix_playlist_endpoint(payload: schemas.PlaylistMixCreate, db: Session = Depends(get_db)):
+    playlist, _rows = create_mix_playlist(
+        db,
+        name=payload.name,
+        window_type=payload.window_type,
+        limit=payload.limit,
+        play_weight=payload.play_weight,
+        implicit_weight=payload.implicit_weight,
+        day_of_week=payload.day_of_week,
+        month=payload.month,
+        year=payload.year,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+    )
+    if not playlist:
+        raise HTTPException(status_code=404, detail="No tracks matched the requested mix window")
+    return playlist
 
 
 @app.get("/health")

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, Numeric
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, Numeric, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func, text
 try:
@@ -76,6 +76,49 @@ class Track(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    playlist_entries = relationship(
+        "PlaylistTrack",
+        back_populates="track",
+        cascade="all, delete-orphan",
+    )
+
+
+class Playlist(Base):
+    __tablename__ = "playlists"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    window_type = Column(String, nullable=False)
+    window_label = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    tracks = relationship(
+        "PlaylistTrack",
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+        order_by="PlaylistTrack.position",
+    )
+
+
+class PlaylistTrack(Base):
+    __tablename__ = "playlist_tracks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    playlist_id = Column(Integer, ForeignKey("playlists.id", ondelete="CASCADE"), nullable=False, index=True)
+    track_video_id = Column(String, ForeignKey("tracks.video_id", ondelete="CASCADE"), nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    mix_score = Column(Float, nullable=False)
+    intentional_plays = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("playlist_id", "position", name="uq_playlist_tracks_playlist_position"),
+        UniqueConstraint("playlist_id", "track_video_id", name="uq_playlist_tracks_playlist_video"),
+    )
+
+    playlist = relationship("Playlist", back_populates="tracks")
+    track = relationship("Track", back_populates="playlist_entries")
 
 
 class TrackMetadata(Base):

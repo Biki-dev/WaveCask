@@ -16,6 +16,7 @@ nightly job
 
 
 import logging
+from datetime import datetime
 from sqlalchemy import text
 from src.database import SessionLocal
 from src.tracks_service import (
@@ -24,6 +25,7 @@ from src.tracks_service import (
     enrich_completed_tracks,
     refresh_implicit_track_scores,
 )
+from src.playlists_service import create_mix_playlist, create_mood_playlists, create_context_playlists
 
 logger = logging.getLogger(__name__)
 
@@ -157,9 +159,63 @@ def classify_tracks_nightly():
         scored = refresh_implicit_track_scores(db)
         logger.info(f"Phase 4 done: refreshed implicit scores for {scored} tracks.")
 
-        # ── Phase 5: enrich metadata via LLM (is_music=True, embedding_done) ──
+        # ── Phase 5: generate mood playlists from embeddings + implicit score ─
+        mood_playlists = create_mood_playlists(db)
+        logger.info(f"Phase 5 done: created {len(mood_playlists)} mood playlists.")
+
+        # ── Phase 6: enrich metadata via LLM (is_music=True, embedding_done) ──
         enriched = enrich_completed_tracks(db)
-        logger.info(f"Phase 5 done: enriched {enriched} music tracks.")
+        logger.info(f"Phase 6 done: enriched {enriched} music tracks.")
+
+        # ── Phase 7: generate nightly mix playlists ─────────────────────────
+        now = datetime.now()
+        windows = [
+            {
+                "name": f"Today Mix - {now.date().isoformat()}",
+                "window_type": "today",
+            },
+            {
+                "name": f"{now.strftime('%A')} Mix - {now.date().isoformat()}",
+                "window_type": "day_of_week",
+                "day_of_week": now.isoweekday() % 7,
+            },
+            {
+                "name": f"{now.strftime('%B %Y')} Mix - {now.date().isoformat()}",
+                "window_type": "month",
+                "month": now.month,
+                "year": now.year,
+            },
+        ]
+
+        created_playlists = 0
+        for window in windows:
+            playlist, rows = create_mix_playlist(
+                db,
+                name=window["name"],
+                window_type=window["window_type"],
+                day_of_week=window.get("day_of_week"),
+                month=window.get("month"),
+                year=window.get("year"),
+            )
+            if playlist:
+                created_playlists += 1
+                logger.info(
+                    "Phase 7 created playlist id=%s name=%s tracks=%s",
+                    playlist.id,
+                    playlist.name,
+                    len(rows),
+                )
+            else:
+                logger.info(
+                    "Phase 7 skipped: no tracks matched window_type=%s",
+                    window["window_type"],
+                )
+
+        logger.info(f"Phase 7 done: created {created_playlists} nightly mix playlists.")
+
+        # ── Phase 8: generate context playlists (night / commute / all-time) ─
+        context_playlists = create_context_playlists(db)
+        logger.info(f"Phase 8 done: created {len(context_playlists)} context playlists.")
 
     except Exception as e:
         db.rollback()

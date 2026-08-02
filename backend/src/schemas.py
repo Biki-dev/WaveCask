@@ -1,5 +1,5 @@
 from pydantic import BaseModel, field_validator
-from typing import Optional
+from typing import Optional, Literal
 from datetime import datetime
 import json
 
@@ -70,6 +70,52 @@ class TrackResponse(BaseModel):
                 return [float(x) for x in stripped[1:-1].split(",") if x.strip()]
             return json.loads(stripped)
         raise ValueError(f"Cannot parse audio_embedding value: {v!r}")
+
+    class Config:
+        from_attributes = True
+
+
+class PlaylistMixCreate(BaseModel):
+    name: Optional[str] = None
+    window_type: Literal["today", "day_of_week", "month", "date_range"]
+    day_of_week: Optional[int] = None
+    month: Optional[int] = None
+    year: Optional[int] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    limit: int = 30
+    play_weight: float = 0.5
+    implicit_weight: float = 0.5
+
+
+class PlaylistTrackResponse(BaseModel):
+    position: int
+    mix_score: float
+    intentional_plays: int
+    track: TrackResponse
+
+    class Config:
+        from_attributes = True
+
+
+class PlaylistResponse(BaseModel):
+    id: int
+    name: str
+    window_type: str
+    window_label: Optional[str]
+    created_at: datetime
+    tracks: list[PlaylistTrackResponse]
+
+    class Config:
+        from_attributes = True
+
+
+class PlaylistSummaryResponse(BaseModel):
+    id: int
+    name: str
+    window_type: str
+    window_label: Optional[str]
+    created_at: datetime
 
     class Config:
         from_attributes = True
