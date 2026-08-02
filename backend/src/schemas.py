@@ -14,6 +14,7 @@ class RawEventCreate(BaseModel):
     position_seconds: float
     video_duration_seconds: Optional[float] = None
     is_autoplay: bool
+    delta_seconds: float = 0.0
     timestamp: datetime
 
 class RawEventResponse(RawEventCreate):
@@ -40,6 +41,7 @@ class TrackResponse(BaseModel):
     cache_key: str
     channel: str
     duration_seconds: Optional[float]
+    total_watch_seconds: float
     is_music: bool
     classification_source: Optional[str]
     artist: str

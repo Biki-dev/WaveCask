@@ -5,6 +5,7 @@ let userInteracted = false;
 let tabId = null;
 let deviceId = null;
 const PROGRESS_INTERVAL_MS = 10000;
+let lastWatchCheckpointMs = null;
 
 // Listen for user interactions to detect autoplay
 document.addEventListener('click', () => { userInteracted = true; });
@@ -56,7 +57,7 @@ function detectAutoplay() {
 }
 
 // Log event data to the console and send it to the backend
-function logEvent(eventType, position, duration, isAuto = false) {
+function logEvent(eventType, position, duration, isAuto = false, deltaSeconds = 0) {
     const data = {
         video_id: currentVideoId,
         title: getVideoTitle(),
@@ -68,6 +69,7 @@ function logEvent(eventType, position, duration, isAuto = false) {
         position_seconds: Math.round(position * 100) / 100,
         video_duration_seconds: duration ? Math.round(duration * 100) / 100 : null,
         is_autoplay: isAuto,
+        delta_seconds: Math.max(0, Math.round(deltaSeconds * 100) / 100),
         timestamp: new Date().toISOString()
     };
     console.log('WAVECASK EVENT:', data);
@@ -95,26 +97,36 @@ function attachListeners(video) {
         }
 
         const auto = detectAutoplay();
-        logEvent('play', video.currentTime, video.duration, auto);
+        logEvent('play', video.currentTime, video.duration, auto, 0);
+        lastWatchCheckpointMs = Date.now();
     });
 
     video.addEventListener('pause', () => {
-        logEvent('pause', video.currentTime, video.duration);
+        const now = Date.now();
+        const deltaSeconds = lastWatchCheckpointMs ? (now - lastWatchCheckpointMs) / 1000 : 0;
+        logEvent('pause', video.currentTime, video.duration, false, deltaSeconds);
+        lastWatchCheckpointMs = null;
     });
 
     video.addEventListener('seeked', () => {
-        logEvent('seeked', video.currentTime, video.duration);
+        logEvent('seeked', video.currentTime, video.duration, false, 0);
+        lastWatchCheckpointMs = Date.now();
     });
 
     video.addEventListener('ended', () => {
-        logEvent('ended', video.duration, video.duration);
+        const now = Date.now();
+        const deltaSeconds = lastWatchCheckpointMs ? (now - lastWatchCheckpointMs) / 1000 : 0;
+        logEvent('ended', video.duration, video.duration, false, deltaSeconds);
+        lastWatchCheckpointMs = null;
     });
 
     video.addEventListener('timeupdate', () => {
         const now = Date.now();
         if (now - lastProgressTime >= PROGRESS_INTERVAL_MS) {
-            logEvent('progress', video.currentTime, video.duration);
+            const deltaSeconds = lastWatchCheckpointMs ? (now - lastWatchCheckpointMs) / 1000 : 0;
+            logEvent('progress', video.currentTime, video.duration, false, deltaSeconds);
             lastProgressTime = now;
+            lastWatchCheckpointMs = now;
         }
     });
 }
@@ -131,6 +143,7 @@ async function initTracking() {
     if (currentVideoId !== videoId) {
         currentVideoId = videoId;
         lastProgressTime = 0;
+        lastWatchCheckpointMs = null;
         console.log(`New video detected: ${videoId} (Session: ${sessionId})`);
     }
 

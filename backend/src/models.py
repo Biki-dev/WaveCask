@@ -1,6 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, Numeric
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 try:
     from pgvector.sqlalchemy import Vector
     _has_pgvector = True
@@ -22,6 +22,7 @@ class RawEvent(Base):
     position_seconds = Column(Float, nullable=False)
     video_duration_seconds = Column(Float, nullable=True)
     is_autoplay = Column(Boolean, nullable=False)
+    delta_seconds = Column(Numeric(10, 2), nullable=False, default=0.0, server_default=text("0.0"))
     timestamp = Column(DateTime(timezone=True), nullable=False)
 
 class SessionSummary(Base):
@@ -52,6 +53,7 @@ class Track(Base):
     cache_key = Column(String, index=True, nullable=False) 
     channel = Column(String, nullable=False)
     duration_seconds = Column(Float, nullable=True)
+    total_watch_seconds = Column(Numeric(10, 2), nullable=False, default=0.0, server_default=text("0.0"))
     is_music = Column(Boolean, nullable=False, default=False)
     classification_source = Column(String, nullable=True)  # "layer1", "layer2", "layer3"
     artist = Column(String, nullable=False, default="Unknown")

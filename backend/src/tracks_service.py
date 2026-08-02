@@ -9,6 +9,7 @@ Handles:
 
 import re
 import logging
+import math
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -22,6 +23,26 @@ logger = logging.getLogger(__name__)
 
 def _make_cache_key(raw_title: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", raw_title.lower()).strip()
+
+
+def _compute_implicit_score(
+    duration_seconds: float | None,
+    total_watch_seconds: float | None,
+    replay_count: int,
+    early_skipped: bool,
+) -> float:
+    duration = float(duration_seconds or 0.0)
+    watch_time = float(total_watch_seconds or 0.0)
+
+    completion_ratio = 0.0
+    if duration > 0:
+        completion_ratio = max(0.0, min(watch_time / duration, 1.0))
+
+    replay_bonus = 0.5 * math.log1p(max(replay_count, 0))
+    skip_penalty = 0.8 if early_skipped else 0.0
+
+    score = completion_ratio + replay_bonus - skip_penalty
+    return round(max(0.0, min(score, 1.0)), 4)
 
 
 def upsert_track_from_event(db: Session, event: models.RawEvent) -> None:
@@ -214,6 +235,54 @@ def enrich_completed_tracks(db: Session) -> int:
 
     logger.info(f"Metadata enrichment complete. {succeeded}/{len(candidates)} tracks enriched.")
     return succeeded
+
+
+def refresh_implicit_track_scores(db: Session) -> int:
+    query = text("""
+        SELECT
+            video_id,
+            MAX(video_duration_seconds) AS duration,
+            MAX(position_seconds) AS max_position_reached,
+            COALESCE(SUM(delta_seconds), 0) AS total_watch_seconds,
+            COUNT(CASE WHEN event_type = 'play' AND is_autoplay = FALSE THEN 1 END) AS replay_count,
+            CASE
+                WHEN MAX(CASE WHEN event_type IN ('pause','seeked') AND position_seconds < 10 THEN 1 ELSE 0 END) = 1
+                     AND MAX(CASE WHEN event_type = 'ended' THEN 1 ELSE 0 END) = 0
+                THEN TRUE ELSE FALSE
+            END AS early_skipped
+        FROM raw_events
+        WHERE video_id IN (
+            SELECT video_id FROM tracks WHERE processing_status = 'embedding_done'
+        )
+        GROUP BY video_id
+    """)
+
+    rows = db.execute(query).mappings().all()
+    if not rows:
+        logger.info("No embedded tracks awaiting implicit score refresh.")
+        return 0
+
+    updated = 0
+    for row in rows:
+        track = db.query(models.Track).filter(models.Track.video_id == row["video_id"]).first()
+        if not track:
+            continue
+
+        track.max_position_reached = row["max_position_reached"]
+        track.total_watch_seconds = float(row["total_watch_seconds"] or 0.0)
+        track.replay_count = int(row["replay_count"] or 0)
+        track.early_skipped = bool(row["early_skipped"])
+        track.implicit_score = _compute_implicit_score(
+            duration_seconds=row["duration"],
+            total_watch_seconds=row["total_watch_seconds"],
+            replay_count=track.replay_count,
+            early_skipped=track.early_skipped,
+        )
+        updated += 1
+
+    db.commit()
+    logger.info(f"Implicit score refresh complete. Updated {updated}/{len(rows)} tracks.")
+    return updated
 
 
 def enrich_single_track(video_id: str, db: Session) -> bool:

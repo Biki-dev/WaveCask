@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 
 
 from src import models, schemas
-from src.database import engine, get_db, ensure_pgvector_extension, ensure_vector_column
+from src.database import engine, get_db, ensure_pgvector_extension, ensure_vector_column, ensure_analytics_columns
 from src.jobs import sync_sessions_nightly, classify_tracks_nightly
 from src.tracks_service import upsert_track_from_event, embed_classified_tracks, enrich_completed_tracks, enrich_single_track
 from src.classifier.audio_embedding import extract_and_store_embedding
@@ -30,6 +30,9 @@ async def lifespan(app: FastAPI):
 
     # 3. Migrate audio_embedding column from TEXT → vector(512) if needed
     ensure_vector_column()
+
+    # 4. Add analytics columns used by the nightly implicit-score refresh
+    ensure_analytics_columns()
 
     # Nightly jobs
     scheduler.add_job(sync_sessions_nightly, CronTrigger(hour=2, minute=0), id="sync_sessions")

@@ -34,6 +34,17 @@ def ensure_vector_column() -> None:
             conn.commit()
 
 
+def ensure_analytics_columns() -> None:
+    with engine.connect() as conn:
+        conn.execute(text(
+            "ALTER TABLE raw_events ADD COLUMN IF NOT EXISTS delta_seconds NUMERIC(10,2) NOT NULL DEFAULT 0.0"
+        ))
+        conn.execute(text(
+            "ALTER TABLE tracks ADD COLUMN IF NOT EXISTS total_watch_seconds NUMERIC(10,2) NOT NULL DEFAULT 0.0"
+        ))
+        conn.commit()
+
+
 def get_db():
     db = SessionLocal()
     try:
