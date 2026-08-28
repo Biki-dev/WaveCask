@@ -19,13 +19,17 @@ import logging
 from datetime import datetime
 from sqlalchemy import text
 from src.database import SessionLocal
-from src.tracks_service import (
+from src.services.track_service import (
     classify_pending_tracks,
     embed_classified_tracks,
     enrich_completed_tracks,
     refresh_implicit_track_scores,
 )
-from src.playlists_service import create_mix_playlist, create_mood_playlists, create_context_playlists
+from src.services.playlist_service import (
+    create_context_playlists,
+    create_mix_playlist,
+    create_mood_playlists,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -17,7 +17,7 @@ from src import models
 from src.classifier.pipeline import run_pipeline
 from src.classifier.audio_embedding import extract_and_store_embedding
 from src.classifier.metadata_enrichment import enrich_track_metadata
-from src.playlists_service import create_mood_playlists
+from src.services.playlist_service import create_mood_playlists
 
 logger = logging.getLogger(__name__)
 
