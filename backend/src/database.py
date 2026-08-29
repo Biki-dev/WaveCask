@@ -42,6 +42,9 @@ def ensure_analytics_columns() -> None:
         conn.execute(text(
             "ALTER TABLE tracks ADD COLUMN IF NOT EXISTS total_watch_seconds NUMERIC(10,2) NOT NULL DEFAULT 0.0"
         ))
+        conn.execute(text(
+            "ALTER TABLE tracks ADD COLUMN IF NOT EXISTS preference DOUBLE PRECISION NOT NULL DEFAULT 0.5"
+        ))
         conn.commit()
 
 

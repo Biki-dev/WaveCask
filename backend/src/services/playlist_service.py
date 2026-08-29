@@ -17,13 +17,17 @@ from src import models
 from src.services.playlist_context import build_all_time_rows, build_commute_rows, build_late_night_rows
 from src.services.playlist_mix import build_mix_rows, window_label_from_request
 from src.services.playlist_mood import (
+    clamp01,
     load_existing_mood_playlists,
     load_existing_playlist_rows,
     merge_playlist_rows,
+    mood_track_score,
     parse_audio_embedding,
     parse_release_year,
     playlist_profile,
+    recency_score,
     score_playlist_match,
+    select_diverse_mood_rows,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,18 +45,33 @@ def _find_playlist_by_identity(db: Session, *, name: str, window_type: str, wind
     )
 
 
-def _persist_playlist_from_rows(db: Session, *, name: str, window_type: str, window_label: str, rows):
-    if not rows:
-        return None
-
-    playlist = _find_playlist_by_identity(db, name=name, window_type=window_type, window_label=window_label)
-    if playlist:
-        db.query(models.PlaylistTrack).filter(models.PlaylistTrack.playlist_id == playlist.id).delete(synchronize_session=False)
-        logger.info("Refreshing existing playlist id=%s name=%s.", playlist.id, playlist.name)
-    else:
-        playlist = models.Playlist(name=name, window_type=window_type, window_label=window_label)
+def replace_playlist_from_rows(
+    db: Session, *, name: str, window_type: str, window_label: str, rows: list[dict]
+):
+    playlist = _find_playlist_by_identity(
+        db,
+        name=name,
+        window_type=window_type,
+        window_label=window_label,
+    )
+    if playlist is None:
+        if not rows:
+            return None
+        playlist = models.Playlist(
+            name=name,
+            window_type=window_type,
+            window_label=window_label,
+            algorithm="mood_genre_v2",
+            model_version="mood-v2",
+        )
         db.add(playlist)
         db.flush()
+    else:
+        db.query(models.PlaylistTrack).filter(
+            models.PlaylistTrack.playlist_id == playlist.id
+        ).delete(synchronize_session=False)
+        playlist.algorithm = "mood_genre_v2"
+        playlist.model_version = "mood-v2"
 
     for position, row in enumerate(rows, start=1):
         db.add(
@@ -60,8 +79,10 @@ def _persist_playlist_from_rows(db: Session, *, name: str, window_type: str, win
                 playlist_id=playlist.id,
                 track_video_id=row["video_id"],
                 position=position,
-                mix_score=float(row["mix_score"] or 0.0),
-                intentional_plays=int(row.get("intentional_plays") or 0),
+                mix_score=float(row["mix_score"]),
+                intentional_plays=int(row.get("intentional_plays", 0)),
+                reason=row.get("reason"),
+                score_components=row.get("score_components"),
             )
         )
 
@@ -71,8 +92,19 @@ def _persist_playlist_from_rows(db: Session, *, name: str, window_type: str, win
     return playlist
 
 
+def _persist_playlist_from_rows(db: Session, *, name: str, window_type: str, window_label: str, rows):
+    return replace_playlist_from_rows(
+        db, name=name, window_type=window_type, window_label=window_label, rows=rows or []
+    )
+
+
 def create_mood_playlists(db: Session):
-    """Build simple mood playlists by genre, using existing playlist profiles when available."""
+    """Build deterministic mood playlists by genre with atomic replacement and diversity selection."""
+    existing_mood_playlists = (
+        db.query(models.Playlist).filter(models.Playlist.window_type == "mood").all()
+    )
+    existing_labels = {p.window_label for p in existing_mood_playlists if p.window_label}
+
     query = db.execute(
         text(
             """
@@ -83,68 +115,155 @@ def create_mood_playlists(db: Session):
                 t.genre,
                 t.release_year,
                 t.replay_count,
-                t.created_at,
-                t.implicit_score,
-                t.audio_embedding::text AS audio_embedding,
-                (
-                    SELECT re.session_id
-                    FROM raw_events re
-                    WHERE re.video_id = t.video_id
-                      AND re.session_id IS NOT NULL
-                    ORDER BY re.timestamp DESC, re.id DESC
-                    LIMIT 1
-                ) AS latest_session_id
+                t.engagement_score_norm,
+                t.completion_ratio,
+                t.skip_rate,
+                t.last_played_at,
+                t.preference,
+                t.audio_embedding::text AS audio_embedding
             FROM tracks t
-            WHERE t.processing_status IN ('embedding_done', 'completed')
+            WHERE t.is_music = TRUE
+              AND t.processing_status IN ('embedding_done', 'completed')
               AND t.audio_embedding IS NOT NULL
-              AND COALESCE(t.implicit_score, 0) > 0.1
             """
         )
     ).mappings().all()
 
     if not query:
+        # Clear all existing mood playlists if no tracks match
+        for label in existing_labels:
+            name = "Unclassified Mix" if label == "Unclassified" else f"{label} Mix"
+            replace_playlist_from_rows(
+                db, name=name, window_type="mood", window_label=label, rows=[]
+            )
         return []
 
     genre_rows: dict[str, list[dict]] = defaultdict(list)
+    unclassified_candidates: list[dict] = []
+
     for row in query:
         embedding = parse_audio_embedding(row["audio_embedding"])
         if embedding is None:
             continue
 
-        genre = row["genre"] or "Other"
-        track_row = {
-            "video_id": row["video_id"],
-            "mix_score": float(row["implicit_score"] or 0.0),
-            "intentional_plays": int(row["replay_count"] or 0),
-            "genre": genre,
-            "artist": row["artist"] or "Unknown",
-            "release_year": row["release_year"],
-            "session_id": row["latest_session_id"],
-            "embedding": embedding,
-        }
-        genre_rows[genre].append(track_row)
+        raw_genre = (row["genre"] or "").strip()
+        is_known = bool(raw_genre) and raw_genre.lower() not in {"unknown", "other"}
 
-    existing_playlists = load_existing_mood_playlists(db)
+        track_data = dict(row)
+        track_data["embedding_quality"] = 1.0
+
+        if is_known:
+            genre_rows[raw_genre].append(track_data)
+        else:
+            unclassified_candidates.append(track_data)
+
     created_playlists = []
+    updated_labels: set[str] = set()
 
     for genre, rows in genre_rows.items():
-        if genre in {"Unknown", "Other"} or len(rows) < 2:
+        if len(rows) < 2:
+            unclassified_candidates.extend(rows)
             continue
 
-        existing_rows = load_existing_playlist_rows(db, genre)
-        merged_rows = merge_playlist_rows(existing_rows, rows)
-        playlist = _persist_playlist_from_rows(
+        scored_rows = []
+        for row in rows:
+            pref = clamp01(
+                row.get("preference")
+                if row.get("preference") is not None
+                else row.get("engagement_score_norm")
+            )
+            comp = clamp01(row.get("completion_ratio"))
+            skip_q = 1.0 - clamp01(row.get("skip_rate"))
+            rec = recency_score(row.get("last_played_at"))
+            components = {
+                "preference": pref,
+                "completion": comp,
+                "skip_quality": skip_q,
+                "recency": rec,
+                "metadata_confidence": 1.0,
+                "embedding_quality": 1.0,
+            }
+            base_score = mood_track_score(row)
+            scored_rows.append(
+                {
+                    "video_id": row["video_id"],
+                    "artist": row["artist"],
+                    "song": row["song"],
+                    "genre": genre,
+                    "base_score": base_score,
+                    "intentional_plays": int(row.get("replay_count") or 0),
+                    "reason": f"mood_genre: genre={genre}, score={base_score:.3f}",
+                    "score_components": components,
+                }
+            )
+
+        selected = select_diverse_mood_rows(scored_rows, limit=30)
+        playlist = replace_playlist_from_rows(
             db,
             name=f"{genre} Mix",
             window_type="mood",
             window_label=genre,
-            rows=merged_rows,
+            rows=selected,
         )
-        if playlist:
+        if playlist and selected:
             created_playlists.append(playlist)
+            updated_labels.add(genre)
 
-    if existing_playlists:
-        logger.info("Refreshed %s existing mood profiles.", len(existing_playlists))
+    if unclassified_candidates:
+        scored_unclassified = []
+        for row in unclassified_candidates:
+            pref = clamp01(
+                row.get("preference")
+                if row.get("preference") is not None
+                else row.get("engagement_score_norm")
+            )
+            comp = clamp01(row.get("completion_ratio"))
+            skip_q = 1.0 - clamp01(row.get("skip_rate"))
+            rec = recency_score(row.get("last_played_at"))
+            known_genre = (row.get("genre") or "Unknown").strip().lower() not in {"unknown", "other", ""}
+            meta_conf = 1.0 if known_genre else 0.25
+
+            components = {
+                "preference": pref,
+                "completion": comp,
+                "skip_quality": skip_q,
+                "recency": rec,
+                "metadata_confidence": meta_conf,
+                "embedding_quality": 1.0,
+            }
+            base_score = mood_track_score(row)
+            scored_unclassified.append(
+                {
+                    "video_id": row["video_id"],
+                    "artist": row["artist"],
+                    "song": row["song"],
+                    "genre": row.get("genre") or "Unknown",
+                    "base_score": base_score,
+                    "intentional_plays": int(row.get("replay_count") or 0),
+                    "reason": f"mood_genre: genre=Unclassified, score={base_score:.3f}",
+                    "score_components": components,
+                }
+            )
+
+        selected = select_diverse_mood_rows(scored_unclassified, limit=30)
+        playlist = replace_playlist_from_rows(
+            db,
+            name="Unclassified Mix",
+            window_type="mood",
+            window_label="Unclassified",
+            rows=selected,
+        )
+        if playlist and selected:
+            created_playlists.append(playlist)
+            updated_labels.add("Unclassified")
+
+    # Clear any pre-existing mood playlists that were not updated in this cycle
+    stale_labels = existing_labels - updated_labels
+    for stale_label in stale_labels:
+        name = "Unclassified Mix" if stale_label == "Unclassified" else f"{stale_label} Mix"
+        replace_playlist_from_rows(
+            db, name=name, window_type="mood", window_label=stale_label, rows=[]
+        )
 
     return created_playlists
 

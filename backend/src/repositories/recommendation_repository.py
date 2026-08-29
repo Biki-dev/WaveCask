@@ -54,6 +54,7 @@ def rebuild_engagement(db: Session, now: datetime | None = None) -> int:
                 skip_rate,
                 recency_score,
                 engagement_score,
+                preference,
                 updated_at
             )
             WITH per_track AS (
@@ -82,9 +83,9 @@ def rebuild_engagement(db: Session, now: datetime | None = None) -> int:
                 SELECT
                     p.*,
                     LEAST(1.0, GREATEST(0.0,
-                        CASE WHEN p.duration_seconds > 0
-                             THEN p.watch_seconds / p.duration_seconds
-                             ELSE 0 END
+                         CASE WHEN p.duration_seconds > 0
+                              THEN p.watch_seconds / p.duration_seconds
+                              ELSE 0 END
                     )) AS completion_ratio_raw,
                     LEAST(1.0, GREATEST(0.0,
                         p.skip_count::double precision
@@ -128,9 +129,10 @@ def rebuild_engagement(db: Session, now: datetime | None = None) -> int:
                     WHEN b.p99 > b.p01
                     THEN LEAST(1.0, GREATEST(0.0,
                              (s.raw_engagement - b.p01) / (b.p99 - b.p01)
-                         ))
+                          ))
                     ELSE 0.5
                 END,
+                (s.ended_count + 2.0) / (s.ended_count + s.skip_count + 4.0),
                 NOW()
             FROM scored s
             CROSS JOIN bounds b
@@ -145,6 +147,7 @@ def rebuild_engagement(db: Session, now: datetime | None = None) -> int:
             engagement_score_norm = e.engagement_score,
             completion_ratio      = e.completion_ratio,
             skip_rate             = e.skip_rate,
+            preference            = e.preference,
             last_played_at        = (
                 SELECT MAX(re.timestamp)
                 FROM raw_events re

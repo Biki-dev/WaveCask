@@ -24,6 +24,27 @@ ALTER TABLE tracks ALTER COLUMN skip_rate SET DEFAULT 0;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS last_played_at       TIMESTAMPTZ;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS cluster_id           INTEGER;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS embedding_norm       DOUBLE PRECISION;
+ALTER TABLE tracks ADD COLUMN IF NOT EXISTS preference           DOUBLE PRECISION NOT NULL DEFAULT 0.5;
+
+-- ── track_listening_attempts: attempt-level aggregate table ───────────────
+CREATE TABLE IF NOT EXISTS track_listening_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL REFERENCES tracks(video_id) ON DELETE CASCADE,
+    session_id TEXT,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    watched_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    duration_seconds DOUBLE PRECISION,
+    max_position_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    completion_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
+    ended_normally BOOLEAN NOT NULL DEFAULT FALSE,
+    skipped_early BOOLEAN NOT NULL DEFAULT FALSE,
+    intentional_probability DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_attempts_video_started
+    ON track_listening_attempts(video_id, started_at DESC);
 
 -- ── track_engagement: normalized behavioral aggregates per track ───────────
 CREATE TABLE IF NOT EXISTS track_engagement (
@@ -38,6 +59,7 @@ CREATE TABLE IF NOT EXISTS track_engagement (
     skip_rate              DOUBLE PRECISION NOT NULL DEFAULT 0,
     recency_score          DOUBLE PRECISION NOT NULL DEFAULT 0,
     engagement_score       DOUBLE PRECISION NOT NULL DEFAULT 0,
+    preference             DOUBLE PRECISION NOT NULL DEFAULT 0.5,
     updated_at             TIMESTAMPTZ      NOT NULL DEFAULT NOW()
 );
 

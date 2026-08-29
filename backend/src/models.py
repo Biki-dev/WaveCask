@@ -83,6 +83,7 @@ class Track(Base):
     last_played_at        = Column(DateTime(timezone=True), nullable=True)
     cluster_id            = Column(Integer, nullable=True)
     embedding_norm        = Column(Float, nullable=True)
+    preference            = Column(Float, nullable=False, default=0.5, server_default=text("0.5"))
 
     playlist_entries = relationship(
         "PlaylistTrack",
@@ -95,6 +96,25 @@ class Track(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+
+
+class TrackListeningAttempt(Base):
+    """Attempt-level listening records representing individual sessions / tracks plays."""
+    __tablename__ = "track_listening_attempts"
+
+    attempt_id              = Column(String, primary_key=True)
+    video_id                = Column(String, ForeignKey("tracks.video_id", ondelete="CASCADE"), nullable=False)
+    session_id              = Column(String, nullable=True)
+    started_at              = Column(DateTime(timezone=True), nullable=False)
+    ended_at                = Column(DateTime(timezone=True), nullable=True)
+    watched_seconds         = Column(Float, nullable=False, default=0.0)
+    duration_seconds        = Column(Float, nullable=True)
+    max_position_seconds    = Column(Float, nullable=False, default=0.0)
+    completion_ratio        = Column(Float, nullable=False, default=0.0)
+    ended_normally          = Column(Boolean, nullable=False, default=False)
+    skipped_early           = Column(Boolean, nullable=False, default=False)
+    intentional_probability = Column(Float, nullable=False, default=0.5)
+    created_at              = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Playlist(Base):
@@ -172,6 +192,7 @@ class TrackEngagement(Base):
     skip_rate              = Column(Float, nullable=False, default=0.0)
     recency_score          = Column(Float, nullable=False, default=0.0)
     engagement_score       = Column(Float, nullable=False, default=0.0)
+    preference             = Column(Float, nullable=False, default=0.5)
     updated_at             = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     track = relationship("Track", back_populates="engagement")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import math
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
@@ -14,6 +15,74 @@ from sqlalchemy.orm import Session
 from src import models
 
 logger = logging.getLogger(__name__)
+
+
+def clamp01(value: float | None) -> float:
+    return max(0.0, min(float(value or 0.0), 1.0))
+
+
+def recency_score(last_played_at: datetime | None, half_life_days: float = 45.0) -> float:
+    if last_played_at is None:
+        return 1.0
+    if last_played_at.tzinfo is None:
+        last_played_at = last_played_at.replace(tzinfo=timezone.utc)
+    age_days = max(
+        (datetime.now(timezone.utc) - last_played_at).total_seconds() / 86400.0,
+        0.0,
+    )
+    return math.exp(-age_days / half_life_days)
+
+
+def mood_track_score(row: dict) -> float:
+    genre = (row.get("genre") or "Unknown").strip()
+    known_genre = genre.lower() not in {"unknown", "other", ""}
+    metadata_confidence = 1.0 if known_genre else 0.25
+
+    preference = row.get("preference")
+    if preference is None:
+        preference = row.get("engagement_score_norm")
+
+    return (
+        0.40 * clamp01(preference)
+        + 0.20 * clamp01(row.get("completion_ratio"))
+        + 0.10 * (1.0 - clamp01(row.get("skip_rate")))
+        + 0.10 * recency_score(row.get("last_played_at"))
+        + 0.15 * metadata_confidence
+        + 0.05 * float(row.get("embedding_quality", 1.0))
+    )
+
+
+def select_diverse_mood_rows(rows: list[dict], limit: int = 30) -> list[dict]:
+    ranked = sorted(
+        rows,
+        key=lambda row: (-row["base_score"], row["video_id"]),
+    )
+    selected: list[dict] = []
+    selected_ids: set[str] = set()
+    artist_counts: Counter[str] = Counter()
+    artist_cap = max(3, math.ceil(limit / 10))
+
+    unique_artists = {(r.get("artist") or "Unknown").strip() or "Unknown" for r in rows}
+    if len(unique_artists) < artist_cap:
+        artist_cap = limit
+
+    for row in ranked:
+        video_id = row["video_id"]
+        artist = (row.get("artist") or "Unknown").strip() or "Unknown"
+        if video_id in selected_ids:
+            continue
+        if artist_counts[artist] >= artist_cap:
+            continue
+
+        adjusted = row["base_score"] - min(0.20, 0.05 * artist_counts[artist])
+        selected.append({**row, "mix_score": round(adjusted, 6)})
+        selected_ids.add(video_id)
+        artist_counts[artist] += 1
+        if len(selected) >= limit:
+            break
+
+    selected.sort(key=lambda row: (-row["mix_score"], row["video_id"]))
+    return selected
 
 
 def parse_audio_embedding(raw_embedding) -> np.ndarray | None:
