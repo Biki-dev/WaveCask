@@ -15,6 +15,7 @@ from src.api.routes.playlists import router as playlists_router
 from src.api.routes.sessions import router as sessions_router
 from src.api.routes.system import router as system_router
 from src.api.routes.tracks import router as tracks_router
+from src.api.routes.audio import router as audio_router
 from src.database import (
     ensure_analytics_columns,
     ensure_pgvector_extension,
@@ -93,4 +94,5 @@ app.include_router(sessions_router)
 app.include_router(tracks_router)
 app.include_router(playlists_router)
 app.include_router(system_router)
+app.include_router(audio_router)
 
