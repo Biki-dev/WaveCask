@@ -1,15 +1,4 @@
-"""
-audio.py – Audio streaming endpoint.
-
-Uses yt-dlp to resolve the best audio-only stream URL from YouTube for a
-given video_id, then redirects the client directly to that URL.  The
-redirect avoids having the server re-encode or buffer the full audio file.
-
-A /api/audio/{video_id}/url endpoint is also provided for clients that
-need the raw URL (e.g. the frontend audio element).
-"""
 import subprocess
-import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,10 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_audio_url(video_id: str) -> str:
-    """
-    Use yt-dlp to resolve the best audio stream URL from YouTube.
-    Returns the direct streaming URL (valid for ~6 hours).
-    """
     url = f"https://www.youtube.com/watch?v={video_id}"
     try:
         result = subprocess.run(
@@ -56,10 +41,6 @@ def _resolve_audio_url(video_id: str) -> str:
 
 @router.get("/api/audio/{video_id}/url")
 def get_audio_url(video_id: str, db: Session = Depends(get_db)):
-    """
-    Resolve and return the direct YouTube audio stream URL for a track.
-    The frontend can feed this URL directly into an <audio> element.
-    """
     track = db.query(models.Track).filter(models.Track.video_id == video_id).first()
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
@@ -80,9 +61,6 @@ def get_audio_url(video_id: str, db: Session = Depends(get_db)):
 
 @router.get("/api/audio/{video_id}/stream")
 def stream_audio(video_id: str, db: Session = Depends(get_db)):
-    """
-    Redirect directly to the YouTube audio stream URL.
-    """
     track = db.query(models.Track).filter(models.Track.video_id == video_id).first()
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")

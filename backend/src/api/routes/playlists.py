@@ -1,7 +1,3 @@
-"""
-playlists.py – FastAPI routes for playlist operations including the
-               WaveCask recommendation engine endpoints.
-"""
 from datetime import datetime, timezone
 
 import numpy as np
@@ -24,10 +20,6 @@ from src.services.playlist_service import (
 
 router = APIRouter()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Existing playlist endpoints (unchanged contract)
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/api/playlists", response_model=list[schemas.PlaylistSummaryResponse])
 def list_playlists(db: Session = Depends(get_db)):
@@ -62,10 +54,6 @@ def create_mix_playlist_endpoint(payload: schemas.PlaylistMixCreate, db: Session
     return playlist
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Recommendation engine endpoints
-# ─────────────────────────────────────────────────────────────────────────────
-
 @router.post(
     "/api/playlists/discover-weekly",
     response_model=schemas.PlaylistResponse,
@@ -74,11 +62,6 @@ def create_mix_playlist_endpoint(payload: schemas.PlaylistMixCreate, db: Session
 def discover_weekly(
     payload: schemas.RecommendationRequest, db: Session = Depends(get_db)
 ):
-    """
-    Generate or refresh the Discover Weekly playlist from the global taste profile.
-    The playlist is keyed to the current ISO week so it refreshes automatically each
-    Monday in the nightly job; calling this endpoint regenerates it on demand.
-    """
     profile = db.query(models.TasteProfile).filter_by(profile_key="global").first()
     if profile is None:
         raise HTTPException(
@@ -113,11 +96,6 @@ def discover_weekly(
     status_code=201,
 )
 def song_radio(payload: schemas.RadioRequest, db: Session = Depends(get_db)):
-    """
-    Generate a radio playlist seeded from a single track's audio embedding.
-    Returns 30 tracks (configurable) that are sonically and contextually similar
-    to the seed, excluding the seed itself via the repetition penalty.
-    """
     seed = (
         db.query(models.Track)
         .filter(
@@ -157,15 +135,9 @@ def song_radio(payload: schemas.RadioRequest, db: Session = Depends(get_db)):
     status_code=201,
 )
 def also_liked(payload: schemas.AlsoLikedRequest, db: Session = Depends(get_db)):
-    """
-    Generate a 'Listeners Also Liked' playlist from one or more seed tracks.
-    Candidates are ranked primarily by co-occurrence lift, then by the mean
-    embedding centroid of the seed set.
-    """
     if not payload.seed_video_ids:
         raise HTTPException(status_code=422, detail="At least one seed track is required")
 
-    # Deduplicate and cap at 20 seeds
     seed_ids = list(dict.fromkeys(payload.seed_video_ids))[:20]
 
     seed_vectors = (
@@ -209,18 +181,6 @@ def also_liked(payload: schemas.AlsoLikedRequest, db: Session = Depends(get_db))
     response_model=schemas.RecommendationTrainResponse,
 )
 def refresh_recommendation_models(db: Session = Depends(get_db)):
-    """
-    Rebuild all recommendation model artifacts:
-      1. Track engagement features (SQL window functions over raw_events)
-      2. MiniBatchKMeans cluster assignments
-      3. Session co-occurrence pairs
-      4. Global taste profile
-
-    This runs synchronously in the request worker – it is intended only for
-    development or administrative use.  In production the nightly scheduler
-    is the normal execution path.  Protect this endpoint behind auth or a
-    firewall in public deployments.
-    """
     engagement_tracks    = rebuild_engagement(db)
     clusters_version     = fit_track_clusters(db)
     cooccurrence_pairs   = rebuild_session_features(db)

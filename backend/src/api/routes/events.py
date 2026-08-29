@@ -10,7 +10,6 @@ router = APIRouter()
 
 @router.post("/api/rawevents", response_model=schemas.RawEventResponse, status_code=status.HTTP_201_CREATED)
 def create_event(event: schemas.RawEventCreate, db: Session = Depends(get_db)):
-    """Save a raw event and immediately upsert a track stub if a video_id exists."""
     db_event = models.RawEvent(**event.model_dump())
 
     db.add(db_event)

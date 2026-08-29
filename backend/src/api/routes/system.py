@@ -19,14 +19,12 @@ def _run_single_track_enrichment_job(video_id: str) -> None:
 
 @router.post("/api/sessions/sync", status_code=status.HTTP_202_ACCEPTED)
 def trigger_session_sync(background_tasks: BackgroundTasks):
-    """Trigger the nightly session sync job manually."""
     background_tasks.add_task(sync_sessions_nightly)
     return {"message": "Session sync job started"}
 
 
 @router.post("/api/tracks/classify", status_code=status.HTTP_202_ACCEPTED)
 def trigger_classification(background_tasks: BackgroundTasks):
-    """Manually trigger the pipeline on all pending tracks."""
     background_tasks.add_task(classify_tracks_nightly)
     return {"message": "Track classification started"}
 

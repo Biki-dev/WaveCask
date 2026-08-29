@@ -41,7 +41,6 @@ def list_tracks(
     status_filter: str | None = None,
     db: Session = Depends(get_db),
 ):
-    """List all tracks. Optionally filter by processing status."""
     q = db.query(models.Track)
     if status_filter:
         q = q.filter(models.Track.processing_status == status_filter)
