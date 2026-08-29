@@ -17,6 +17,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./models:/app/models
+      - ./sql:/app/sql
     restart: unless-stopped
 
   db:

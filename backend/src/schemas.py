@@ -119,3 +119,34 @@ class PlaylistSummaryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recommendation engine schemas
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RecommendationRequest(BaseModel):
+    limit: int = 30
+
+    @field_validator("limit")
+    @classmethod
+    def valid_limit(cls, value: int) -> int:
+        if not 1 <= value <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        return value
+
+
+class RadioRequest(RecommendationRequest):
+    seed_video_id: str
+
+
+class AlsoLikedRequest(RecommendationRequest):
+    seed_video_ids: list[str]
+
+
+class RecommendationTrainResponse(BaseModel):
+    clusters_version: Optional[str]
+    engagement_tracks: int
+    cooccurrence_pairs: int
+    taste_profile_tracks: int
+

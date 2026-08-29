@@ -30,6 +30,10 @@ from src.services.playlist_service import (
     create_mix_playlist,
     create_mood_playlists,
 )
+from src.jobs_recommendation import fit_track_clusters, rebuild_session_features
+from src.repositories.recommendation_repository import rebuild_engagement, rebuild_taste_profile
+from src.services.playlist_recommendation import build_playlist, persist_recommendation
+from src import models
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +114,8 @@ def classify_tracks_nightly():
                 release_year,
                 replay_count,
                 early_skipped,
+                completion_ratio,
+                skip_rate,
                 processing_status,
                 created_at,
                 updated_at
@@ -128,6 +134,8 @@ def classify_tracks_nightly():
                 'Unknown'                                          AS release_year,
                 0                                                  AS replay_count,
                 false                                              AS early_skipped,
+                0.0                                                AS completion_ratio,
+                0.0                                                AS skip_rate,
                 'pending_classification'                           AS processing_status,
                 NOW()                                              AS created_at,
                 NOW()                                              AS updated_at
@@ -227,3 +235,62 @@ def classify_tracks_nightly():
     finally:
         db.close()
 
+
+
+def recommendation_models_nightly():
+    """
+    Phase R: Rebuild all recommendation model artifacts.
+    Execution order matters:
+      R1. rebuild_engagement        – needs raw_events
+      R2. fit_track_clusters        – needs audio_embedding
+      R3. rebuild_session_features  – needs sessions + raw_events
+      R4. rebuild_taste_profile     – needs engagement_score_norm
+      R5. Persist Discover Weekly   – needs taste profile
+    """
+    logger.info("Starting recommendation model refresh...")
+    db = SessionLocal()
+    try:
+        engagement_count = rebuild_engagement(db)
+        logger.info("Rec Phase R1 done: engagement_tracks=%d", engagement_count)
+
+        cluster_version = fit_track_clusters(db)
+        logger.info("Rec Phase R2 done: cluster_version=%s", cluster_version)
+
+        pair_count = rebuild_session_features(db)
+        logger.info("Rec Phase R3 done: cooccurrence_pairs=%d", pair_count)
+
+        profile_count = rebuild_taste_profile(db)
+        logger.info("Rec Phase R4 done: taste_profile_tracks=%d", profile_count)
+
+        # Refresh the standing Discover Weekly playlist for the current ISO week
+        profile = db.query(models.TasteProfile).filter_by(profile_key="global").first()
+        if profile is not None:
+            week_key = datetime.utcnow().strftime("%G-W%V")
+            rows = build_playlist(
+                db,
+                algorithm="discover_weekly",
+                profile_vector=profile.embedding,
+                limit=50,
+                generated_for=week_key,
+            )
+            persist_recommendation(
+                db,
+                name="Discover Weekly",
+                algorithm="discover_weekly",
+                model_version=cluster_version or "v1",
+                generated_for=week_key,
+                rows=rows,
+            )
+            logger.info("Rec Phase R5 done: Discover Weekly persisted (%d tracks)", len(rows))
+        else:
+            logger.warning("Rec Phase R5 skipped: taste profile not ready")
+
+        logger.info(
+            "Recommendation refresh complete: engagement=%d clusters=%s pairs=%d profile=%d",
+            engagement_count, cluster_version, pair_count, profile_count,
+        )
+    except Exception:
+        db.rollback()
+        logger.exception("Recommendation model refresh failed")
+    finally:
+        db.close()

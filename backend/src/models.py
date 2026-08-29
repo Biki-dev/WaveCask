@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, Numeric, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, Numeric, ForeignKey, UniqueConstraint, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func, text
 try:
@@ -76,10 +76,23 @@ class Track(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    # ── Recommendation engine columns ────────────────────────────────────────
+    engagement_score_norm = Column(Float, nullable=True)
+    completion_ratio      = Column(Float, nullable=False, default=0.0, server_default=text("0.0"))
+    skip_rate             = Column(Float, nullable=False, default=0.0, server_default=text("0.0"))
+    last_played_at        = Column(DateTime(timezone=True), nullable=True)
+    cluster_id            = Column(Integer, nullable=True)
+    embedding_norm        = Column(Float, nullable=True)
 
     playlist_entries = relationship(
         "PlaylistTrack",
         back_populates="track",
+        cascade="all, delete-orphan",
+    )
+    engagement = relationship(
+        "TrackEngagement",
+        back_populates="track",
+        uselist=False,
         cascade="all, delete-orphan",
     )
 
@@ -92,6 +105,10 @@ class Playlist(Base):
     window_type = Column(String, nullable=False)
     window_label = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # ── Recommendation engine columns ────────────────────────────────────────
+    algorithm     = Column(String, nullable=True, index=True)
+    model_version = Column(String, nullable=True)
+    generated_for = Column(String, nullable=True)
 
     tracks = relationship(
         "PlaylistTrack",
@@ -111,6 +128,9 @@ class PlaylistTrack(Base):
     mix_score = Column(Float, nullable=False)
     intentional_plays = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # ── Recommendation engine columns ────────────────────────────────────────
+    reason           = Column(String, nullable=True)
+    score_components = Column(JSON, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("playlist_id", "position", name="uq_playlist_tracks_playlist_position"),
@@ -131,3 +151,72 @@ class TrackMetadata(Base):
     genre = Column(String, nullable=False, default="Unknown")
     release_year = Column(String, nullable=False, default="Unknown")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recommendation engine tables
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TrackEngagement(Base):
+    """Normalized behavioral aggregates per track, rebuilt nightly from raw_events."""
+    __tablename__ = "track_engagement"
+
+    video_id               = Column(String, ForeignKey("tracks.video_id", ondelete="CASCADE"), primary_key=True)
+    play_count             = Column(Integer, nullable=False, default=0)
+    intentional_play_count = Column(Integer, nullable=False, default=0)
+    ended_count            = Column(Integer, nullable=False, default=0)
+    skip_count             = Column(Integer, nullable=False, default=0)
+    session_count          = Column(Integer, nullable=False, default=0)
+    total_watch_seconds    = Column(Float, nullable=False, default=0.0)
+    completion_ratio       = Column(Float, nullable=False, default=0.0)
+    skip_rate              = Column(Float, nullable=False, default=0.0)
+    recency_score          = Column(Float, nullable=False, default=0.0)
+    engagement_score       = Column(Float, nullable=False, default=0.0)
+    updated_at             = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    track = relationship("Track", back_populates="engagement")
+
+
+class SessionTrackStat(Base):
+    """One row per (session, track) capturing play order and intentionality."""
+    __tablename__ = "session_track_stats"
+
+    session_id  = Column(String, ForeignKey("sessions.session_id", ondelete="CASCADE"), primary_key=True)
+    video_id    = Column(String, ForeignKey("tracks.video_id", ondelete="CASCADE"), primary_key=True)
+    position    = Column(Integer, nullable=False)
+    intentional = Column(Boolean, nullable=False, default=False)
+
+
+class TrackCooccurrence(Base):
+    """Directed pair statistics: how often target follows source within 20 positions."""
+    __tablename__ = "track_cooccurrence"
+
+    source_video_id         = Column(String, ForeignKey("tracks.video_id", ondelete="CASCADE"), primary_key=True)
+    target_video_id         = Column(String, ForeignKey("tracks.video_id", ondelete="CASCADE"), primary_key=True)
+    cooccurrence_count      = Column(Integer, nullable=False, default=0)
+    conditional_probability = Column(Float, nullable=False, default=0.0)
+    lift                    = Column(Float, nullable=False, default=0.0)
+    updated_at              = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TrackCluster(Base):
+    """MiniBatchKMeans cluster assignment per track, versioned by fit date."""
+    __tablename__ = "track_clusters"
+
+    video_id             = Column(String, ForeignKey("tracks.video_id", ondelete="CASCADE"), primary_key=True)
+    cluster_id           = Column(Integer, nullable=False, index=True)
+    cluster_version      = Column(String, nullable=False, index=True)
+    distance_to_centroid = Column(Float, nullable=True)
+    updated_at           = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TasteProfile(Base):
+    """Aggregated listener preference vector.  profile_key='global' for single-user installs."""
+    __tablename__ = "taste_profiles"
+
+    profile_key          = Column(String, primary_key=True)
+    embedding            = Column(Vector(512) if _has_pgvector else Text, nullable=False)
+    genre_weights        = Column(JSON, nullable=False, default=dict)
+    cluster_weights      = Column(JSON, nullable=False, default=dict)
+    positive_track_count = Column(Integer, nullable=False, default=0)
+    updated_at           = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

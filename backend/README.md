@@ -279,7 +279,7 @@ When adding a feature or fixing a bug, keep the same structure:
 
 1. Put API-facing entrypoints in the route package.
 2. Keep business orchestration in the service package.
-3. Push SQL-heavy or domain-specific calculations into focused helper modules.
+3. Push SQL-heavy or domain-specific calculations into focused repositories or helpers.
 4. Let the classifier package remain the only place that knows about the model pipeline details.
 5. Keep database schema changes isolated in `models.py` and the `database.py` bootstrap helpers.
 
@@ -293,12 +293,179 @@ For a clean change, prefer:
 
 ## 13. Clean architecture summary
 
-The current backend layout is intentionally organized into clear responsibility boundaries:
+The current backend layout is organized into clear responsibility boundaries:
 
 - `routes` handle request/response surface
-- `services` handle business orchestration
+- `repositories` handle data access and query building
+- `services` handle business orchestration and scoring logic
 - `classifier` handles inference and audio embedding
 - `models` and `database` are the source of truth for persistent data
 - `jobs` defines scheduled batch execution
 
-That structure makes it easier to read, test, and extend without breaking the endpoint contract.
+---
+
+## 14. How to Run the Project
+
+The backend is configured to run locally using Docker Compose, which packages the FastAPI application, a PostgreSQL database with `pgvector`, and pgAdmin.
+
+### Step 1: Set up Environment Variables
+Ensure you have a `.env` file in the root of the `backend` directory (copy from `.env.example`). Adjust the keys if you want to use external classification/enrichment APIs (e.g. `GEMINI_API_KEY`, `YOUTUBE_API_KEY`).
+
+### Step 2: Build and Start Containers
+From the `backend` directory, run:
+```bash
+docker compose up -d --build
+```
+This command builds the FastAPI container, runs the database with pgvector, and exposes the services:
+- **FastAPI API**: [http://localhost:8000](http://localhost:8000)
+- **pgAdmin**: [http://localhost:5050](http://localhost:5050) (Login: `admin@example.com` / `admin123`)
+- **PostgreSQL**: `localhost:5432`
+
+### Step 3: Monitor Logs
+To inspect startup progress, check migration application, and see print/debug logs:
+```bash
+docker compose logs -f api
+```
+
+---
+
+## 15. How to Test the Recommendation Engine Manually
+
+Since recommendation generation is data-driven, you need tracks, user watch sessions, and models in the database to generate meaningful playlists. Follow this step-by-step procedure to test the system manually:
+
+### Step A: Ingest Simulation Data (User Behavior)
+Simulate a user listening history by posting raw events to the ingestion endpoint:
+
+```bash
+# 1. User starts listening to Track A
+curl -X POST http://localhost:8000/api/rawevents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "test-session-123",
+    "video_id": "dQw4w9WgXcQ",
+    "event_type": "play",
+    "position": 0.0,
+    "timestamp": "2026-08-29T12:00:00Z"
+  }'
+
+# 2. User plays the track to completion (reaches end)
+curl -X POST http://localhost:8000/api/rawevents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "test-session-123",
+    "video_id": "dQw4w9WgXcQ",
+    "event_type": "end",
+    "position": 210.0,
+    "timestamp": "2026-08-29T12:03:30Z"
+  }'
+
+# 3. User plays another Track B in the same session
+curl -X POST http://localhost:8000/api/rawevents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "test-session-123",
+    "video_id": "9bZkp7q19f0",
+    "event_type": "play",
+    "position": 0.0,
+    "timestamp": "2026-08-29T12:03:40Z"
+  }'
+```
+
+### Step B: Sync Sessions
+Synchronize raw events into session aggregates (typically a nightly background job):
+```bash
+curl -X POST http://localhost:8000/api/sessions/sync
+```
+
+### Step C: Classify and Embed Ingested Tracks
+Trigger track classification and embedding calculations to mark the stubs as confirmed music and populate `audio_embedding` values:
+```bash
+# 1. Run classifier
+curl -X POST http://localhost:8000/api/tracks/classify
+
+# 2. Run audio downloads & OpenL3 embedding generation
+curl -X POST http://localhost:8000/api/tracks/embed
+```
+
+### Step D: Trigger Recommendation Model Refresh
+Train the MiniBatchKMeans clusters, rebuild user taste profiles, and compute co-occurrence lift:
+```bash
+curl -X POST http://localhost:8000/api/playlists/recommendation-models/refresh
+```
+**Expected Response:**
+```json
+{
+  "clusters_version": "5a4d1b3c9e2f4a08",
+  "engagement_tracks": 2,
+  "cooccurrence_pairs": 1,
+  "taste_profile_tracks": 1
+}
+```
+
+### Step E: Query and Verify Recommendations
+Now that models are computed, request recommendation playlists and check the results:
+
+#### 1. Discover Weekly
+```bash
+curl -X POST http://localhost:8000/api/playlists/discover-weekly \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 5}'
+```
+*Verification:*
+- Verify response contains the tracks.
+- Check the explainability details: each track in `tracks` should have a `reason` (e.g. `"discover_weekly: vector=0.912, metadata=0.500, engagement=0.750"`) and a detailed `score_components` JSON map listing the weights.
+
+#### 2. Song Radio
+```bash
+curl -X POST http://localhost:8000/api/playlists/radio \
+  -H "Content-Type: application/json" \
+  -d '{"seed_video_id": "dQw4w9WgXcQ", "limit": 5}'
+```
+*Verification:*
+- Check that the returned tracks are similar in sound/metadata, and the seed track itself is omitted.
+
+#### 3. Listeners Also Liked
+```bash
+curl -X POST http://localhost:8000/api/playlists/also-liked \
+  -H "Content-Type: application/json" \
+  -d '{"seed_video_ids": ["dQw4w9WgXcQ"], "limit": 5}'
+```
+
+---
+
+## 16. Audio Embeddings and Mood/Cluster Playlists
+
+### Legacy Mood Playlists
+In the legacy mood playlist system (`create_mood_playlists` in `src/services/playlist_service.py`), **audio embeddings are NOT used to cluster the tracks**.
+- The tracks are grouped strictly by their metadata `genre` field (e.g. "Pop Mix" for genre "Pop").
+- The embeddings are only verified to be present (non-null and valid dimension).
+- A helper function `score_playlist_match` calculates cosine similarity between track embeddings and playlist centroids, but it is **imported but never used** in the actual generation loop.
+
+### Recommendation Engine Clusters
+In the new recommendation engine, **audio embeddings ARE used to cluster tracks**:
+- A nightly job runs `fit_track_clusters` (in `src/jobs_recommendation.py`), which uses `MiniBatchKMeans` to cluster the 512-dimension OpenL3 audio embeddings.
+- Every track is assigned a stable `cluster_id` and has its `distance_to_centroid` calculated.
+- These clusters serve as the partition source for the **Daily Mix / Mood Cluster** algorithm, ranking tracks within the cluster based on centroid distance, engagement score, and novelty/diversity constraints.
+
+---
+
+## 17. Detailed API and Nightly Job Flow
+
+For a comprehensive guide on the data flow lifecycle, refer to the [wavecask_api_flow.md](.gemini/antigravity/brain/33d0aad6-e189-438b-a66c-7075fed218bc/artifacts/wavecask_api_flow.md) artifact, which describes the flow from user event ingestion to weekly discovery playlist builds.
+
+### Nightly Job Summary
+The system executes three primary background processes sequentially:
+1. **`sync_sessions_nightly`** (at `02:00 UTC`): Aggregates raw log entries into session boundaries.
+2. **`classify_tracks_nightly`** (at `02:05 UTC`): Runs classification, downloads audio, computes 512-dimensional OpenL3 vectors, refreshes engagement metrics, and runs LLM-based metadata enrichment.
+3. **`recommendation_models_nightly`** (at `04:00 UTC`): Rebuilds user profiles, updates `MiniBatchKMeans` centroids/clusters, and builds the weekly **Discover Weekly** recommendations.
+
+### Manual triggers
+To bypass the nightly job schedule for debugging or testing, you can trigger these phases immediately via POST requests to the following system APIs:
+* **Session Sync:** `POST /api/sessions/sync`
+* **Full Processing (Classification/Embedding/Enrichment):** `POST /api/tracks/classify`
+* **Embeddings (All/Single):** `POST /api/tracks/embed` or `POST /api/tracks/{video_id}/embed`
+* **Enrichment (All/Single):** `POST /api/tracks/enrich` or `POST /api/tracks/{video_id}/enrich`
+* **Rebuild Recommendation Models:** `POST /api/playlists/recommendation-models/refresh`
+* **On-Demand Discover Weekly:** `POST /api/playlists/discover-weekly`
+
+

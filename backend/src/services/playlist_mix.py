@@ -97,7 +97,7 @@ def build_mix_rows(
             (COUNT(re.id) * :play_weight + COALESCE(t.implicit_score, 0) * :implicit_weight) AS mix_score
         FROM tracks t
         JOIN raw_events re ON t.video_id = re.video_id
-        WHERE {where_clause}
+        WHERE t.is_music = TRUE AND {where_clause}
         GROUP BY t.video_id, t.artist, t.song, t.implicit_score
         ORDER BY mix_score DESC, intentional_plays DESC, COALESCE(t.implicit_score, 0) DESC, t.video_id
         LIMIT :limit

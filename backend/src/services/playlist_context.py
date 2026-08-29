@@ -18,7 +18,8 @@ def build_late_night_rows(db: Session, limit: int = 30):
                 (COUNT(re.id) * 0.5 + COALESCE(t.implicit_score, 0) * 0.5) AS mix_score
             FROM tracks t
             JOIN raw_events re ON t.video_id = re.video_id
-            WHERE re.event_type = 'play'
+            WHERE t.is_music = TRUE
+              AND re.event_type = 'play'
               AND re.is_autoplay = FALSE
               AND (
                     EXTRACT(HOUR FROM re.timestamp AT TIME ZONE 'UTC') >= 21
@@ -47,7 +48,8 @@ def build_commute_rows(db: Session, limit: int = 30):
             FROM tracks t
             JOIN raw_events re ON t.video_id = re.video_id
             JOIN sessions s ON re.session_id = s.session_id
-            WHERE re.event_type = 'play'
+            WHERE t.is_music = TRUE
+              AND re.event_type = 'play'
               AND re.is_autoplay = FALSE
               AND s.is_long_session = TRUE
             GROUP BY t.video_id, t.artist, t.song, t.implicit_score

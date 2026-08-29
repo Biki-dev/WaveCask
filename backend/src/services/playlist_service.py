@@ -95,7 +95,7 @@ def create_mood_playlists(db: Session):
                     LIMIT 1
                 ) AS latest_session_id
             FROM tracks t
-            WHERE t.processing_status = 'embedding_done'
+            WHERE t.processing_status IN ('embedding_done', 'completed')
               AND t.audio_embedding IS NOT NULL
               AND COALESCE(t.implicit_score, 0) > 0.1
             """
