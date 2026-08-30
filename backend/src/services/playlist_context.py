@@ -35,7 +35,23 @@ def build_late_night_rows(db: Session, limit: int = 30):
     return db.execute(query, {"limit": limit}).mappings().all()
 
 
-def build_commute_rows(db: Session, limit: int = 30):
+def build_commute_rows(
+    db: Session,
+    limit: int = 30,
+    play_weight: float = 0.5,
+    implicit_weight: float = 0.5,
+):
+    """Build a commute playlist with balanced, configurable ranking signals.
+
+    Play counts are log-normalized within the candidate set so highly replayed songs
+    do not overwhelm the bounded implicit score. Both weights retain the previous
+    50/50 default while allowing future playlist tuning.
+    """
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    if play_weight < 0 or implicit_weight < 0 or play_weight + implicit_weight == 0:
+        raise ValueError("weights must be non-negative and not both zero")
+
     query = text("""
         WITH commute_songs AS (
             SELECT
@@ -43,8 +59,7 @@ def build_commute_rows(db: Session, limit: int = 30):
                 t.artist,
                 t.song,
                 COALESCE(t.implicit_score, 0) AS implicit_score,
-                COUNT(re.id) AS intentional_plays,
-                (COUNT(re.id) * 0.5 + COALESCE(t.implicit_score, 0) * 0.5) AS mix_score
+                COUNT(re.id) AS intentional_plays
             FROM tracks t
             JOIN raw_events re ON t.video_id = re.video_id
             JOIN sessions s ON re.session_id = s.session_id
@@ -53,13 +68,40 @@ def build_commute_rows(db: Session, limit: int = 30):
               AND re.is_autoplay = FALSE
               AND s.is_long_session = TRUE
             GROUP BY t.video_id, t.artist, t.song, t.implicit_score
+        ), normalized_songs AS (
+            SELECT
+                commute_songs.*,
+                CASE
+                    WHEN MAX(intentional_plays) OVER () > 0 THEN
+                        LN(1 + intentional_plays)::DOUBLE PRECISION
+                        / LN(1 + MAX(intentional_plays) OVER ())
+                    ELSE 0
+                END AS normalized_intentional_plays,
+                LEAST(GREATEST(implicit_score, 0), 1) AS normalized_implicit_score
+            FROM commute_songs
         )
-        SELECT *
-        FROM commute_songs
+        SELECT
+            video_id,
+            artist,
+            song,
+            implicit_score,
+            intentional_plays,
+            (
+                :play_weight * normalized_intentional_plays
+                + :implicit_weight * normalized_implicit_score
+            ) AS mix_score
+        FROM normalized_songs
         ORDER BY mix_score DESC, intentional_plays DESC, implicit_score DESC, video_id
         LIMIT :limit
     """)
-    return db.execute(query, {"limit": limit}).mappings().all()
+    return db.execute(
+        query,
+        {
+            "limit": limit,
+            "play_weight": play_weight,
+            "implicit_weight": implicit_weight,
+        },
+    ).mappings().all()
 
 
 def build_all_time_rows(db: Session, limit: int = 30):
