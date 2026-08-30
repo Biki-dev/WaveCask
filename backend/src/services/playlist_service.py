@@ -285,6 +285,35 @@ def create_mood_playlists(db: Session):
     return created_playlists
 
 
+def _merge_month_playlist_rows(db: Session, *, playlist, rows: list[dict]):
+    """Merge newly generated month rows into an existing playlist without losing history.
+
+    Existing track order is preserved. If a track appears again in the newly generated
+    rows, its score metadata is refreshed in place; genuinely new tracks are appended.
+    """
+    existing_by_video_id = {entry.track_video_id: entry for entry in playlist.tracks}
+    next_position = max((entry.position for entry in playlist.tracks), default=0) + 1
+
+    for row in rows:
+        video_id = row["video_id"]
+        existing_entry = existing_by_video_id.get(video_id)
+        if existing_entry is not None:
+            existing_entry.mix_score = float(row.get("mix_score") or 0.0)
+            existing_entry.intentional_plays = int(row.get("intentional_plays") or 0)
+            continue
+
+        entry = models.PlaylistTrack(
+            playlist_id=playlist.id,
+            track_video_id=video_id,
+            position=next_position,
+            mix_score=float(row.get("mix_score") or 0.0),
+            intentional_plays=int(row.get("intentional_plays") or 0),
+        )
+        db.add(entry)
+        existing_by_video_id[video_id] = entry
+        next_position += 1
+
+
 def create_mix_playlist(
     db: Session,
     *,
@@ -306,6 +335,9 @@ def create_mix_playlist(
     if window_type == "date_range" and (start_date is None or end_date is None):
         raise ValueError("start_date and end_date are required for window_type='date_range'.")
 
+    label = window_label_from_request(window_type, day_of_week, month, year, start_date, end_date)
+    playlist_name = name or label
+
     rows = build_mix_rows(
         db,
         window_type=window_type,
@@ -318,36 +350,54 @@ def create_mix_playlist(
         start_date=start_date,
         end_date=end_date,
     )
-    if not rows:
+    if not rows and window_type != "month":
         return None, []
-
-    label = window_label_from_request(window_type, day_of_week, month, year, start_date, end_date)
-    playlist_name = name or label
     playlist = _find_playlist_by_identity(
         db,
         name=playlist_name,
         window_type=window_type,
         window_label=label,
     )
+    if playlist is None and not rows:
+        return None, []
 
     if playlist:
-        db.query(models.PlaylistTrack).filter(models.PlaylistTrack.playlist_id == playlist.id).delete(synchronize_session=False)
-        logger.info("Refreshing existing mix playlist id=%s name=%s.", playlist.id, playlist.name)
+        if window_type == "month":
+            _merge_month_playlist_rows(db, playlist=playlist, rows=rows)
+            logger.info(
+                "Merged %s rows into existing monthly playlist id=%s name=%s.",
+                len(rows),
+                playlist.id,
+                playlist.name,
+            )
+        else:
+            db.query(models.PlaylistTrack).filter(models.PlaylistTrack.playlist_id == playlist.id).delete(synchronize_session=False)
+            for position, row in enumerate(rows, start=1):
+                db.add(
+                    models.PlaylistTrack(
+                        playlist_id=playlist.id,
+                        track_video_id=row["video_id"],
+                        position=position,
+                        mix_score=float(row["mix_score"] or 0.0),
+                        intentional_plays=int(row["intentional_plays"] or 0),
+                    )
+                )
+            logger.info("Refreshing existing mix playlist id=%s name=%s.", playlist.id, playlist.name)
     else:
         playlist = models.Playlist(name=playlist_name, window_type=window_type, window_label=label)
         db.add(playlist)
         db.flush()
 
-    for position, row in enumerate(rows, start=1):
-        db.add(
-            models.PlaylistTrack(
-                playlist_id=playlist.id,
-                track_video_id=row["video_id"],
-                position=position,
-                mix_score=float(row["mix_score"] or 0.0),
-                intentional_plays=int(row["intentional_plays"] or 0),
+        for position, row in enumerate(rows, start=1):
+            db.add(
+                models.PlaylistTrack(
+                    playlist_id=playlist.id,
+                    track_video_id=row["video_id"],
+                    position=position,
+                    mix_score=float(row["mix_score"] or 0.0),
+                    intentional_plays=int(row["intentional_plays"] or 0),
+                )
             )
-        )
 
     db.commit()
     db.refresh(playlist)

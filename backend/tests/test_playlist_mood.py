@@ -17,6 +17,7 @@ from src.services.playlist_mood import (
 from src.services.playlist_service import (
     _find_playlist_by_identity,
     create_mood_playlists,
+    create_mix_playlist,
     replace_playlist_from_rows,
 )
 
@@ -173,6 +174,63 @@ class TestMixPlaylistIdentity:
         assert found.id == existing_id
         assert found.name == "August 2026 Mix"
         assert db_session.query(models.Playlist).filter_by(window_type="month").count() == 1
+
+
+class TestMonthlyMixPlaylistMerge:
+    @staticmethod
+    def _row(video_id, score, plays):
+        return {
+            "video_id": video_id,
+            "artist": f"Artist {video_id}",
+            "song": f"Song {video_id}",
+            "mix_score": score,
+            "intentional_plays": plays,
+        }
+
+    def test_monthly_playlist_accumulates_old_and_new_rows(self, db_session, monkeypatch):
+        tracks = [
+            models.Track(video_id=video_id, raw_title=video_id, cache_key=f"ck_{video_id}", channel="Ch", is_music=True)
+            for video_id in ("old", "shared", "new")
+        ]
+        db_session.add_all(tracks)
+        db_session.commit()
+
+        batches = [
+            [self._row("old", 0.4, 1), self._row("shared", 0.5, 2)],
+            [self._row("shared", 0.9, 7), self._row("new", 0.8, 3)],
+        ]
+        monkeypatch.setattr(
+            "src.services.playlist_service.build_mix_rows",
+            lambda *args, **kwargs: batches.pop(0),
+        )
+
+        first, _ = create_mix_playlist(
+            db_session, name=None, window_type="month", month=8, year=2026
+        )
+        second, _ = create_mix_playlist(
+            db_session, name=None, window_type="month", month=8, year=2026
+        )
+
+        assert second.id == first.id
+        assert db_session.query(models.Playlist).filter_by(window_type="month").count() == 1
+        entries = sorted(second.tracks, key=lambda entry: entry.position)
+        assert [entry.track_video_id for entry in entries] == ["old", "shared", "new"]
+        assert entries[1].mix_score == 0.9
+        assert entries[1].intentional_plays == 7
+
+    def test_empty_month_run_does_not_create_playlist(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            "src.services.playlist_service.build_mix_rows",
+            lambda *args, **kwargs: [],
+        )
+
+        playlist, rows = create_mix_playlist(
+            db_session, name=None, window_type="month", month=8, year=2026
+        )
+
+        assert playlist is None
+        assert rows == []
+        assert db_session.query(models.Playlist).filter_by(window_type="month").count() == 0
 
 
 class TestIntegrationMoodPlaylist:
