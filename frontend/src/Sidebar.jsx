@@ -1,26 +1,16 @@
-import { thumbUrl, PLAYLIST_TYPE_LABEL } from './api'
-import { IconWave, IconHome, IconSearch, IconLibrary, IconMusic, IconPlaylist } from './Icons'
-import { usePlayer } from './PlayerContext'
-
-function PlaylistThumb({ playlist }) {
-  const tracks = playlist.tracks ?? []
-  const vid = tracks[0]?.track?.video_id || tracks[0]?.video_id
-  if (vid) {
-    return (
-      <div className="sidebar-playlist-thumb">
-        <img src={thumbUrl(vid, 'default')} alt="" onError={e => e.target.style.display='none'} loading="lazy" />
-      </div>
-    )
-  }
-  return (
-    <div className="sidebar-playlist-thumb">
-      <IconPlaylist size={18} />
-    </div>
-  )
-}
+import { IconWave, IconHome } from './Icons'
+import OptionWheel from './OptionWheel'
 
 export default function Sidebar({ playlists, selectedId, onSelect, view, onViewChange }) {
-  const { currentTrack, playing } = usePlayer()
+  const selectedIndex = Math.max(0, playlists.findIndex(playlist => playlist.id === selectedId))
+  const playlistNames = playlists.map(playlist => playlist.name)
+
+  const handleLibraryChange = (index) => {
+    const playlist = playlists[index]
+    if (!playlist) return
+    onSelect(playlist.id)
+    onViewChange('playlist')
+  }
 
   return (
     <aside className="sidebar">
@@ -54,30 +44,30 @@ export default function Sidebar({ playlists, selectedId, onSelect, view, onViewC
 
       {/* Library */}
       <div className="sidebar-section-label">Your Library</div>
-      <div className="sidebar-playlist-list">
-        {playlists.map(pl => (
-          <div
-            key={pl.id}
-            className={`sidebar-playlist-item ${selectedId === pl.id && view === 'playlist' ? 'active' : ''}`}
-            onClick={() => { onSelect(pl.id); onViewChange('playlist') }}
-            id={`playlist-item-${pl.id}`}
-          >
-            <PlaylistThumb playlist={pl} />
-            <div className="sidebar-playlist-info">
-              <div className="sidebar-playlist-name">{pl.name}</div>
-              <div className="sidebar-playlist-meta">
-                {PLAYLIST_TYPE_LABEL[pl.window_type] || pl.window_type} · {(pl.tracks ?? []).length}
-              </div>
-            </div>
-          </div>
-        ))}
-
-        {playlists.length === 0 && (
-          <div style={{ padding: '20px 12px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>
-            No playlists yet.<br />Run the nightly pipeline to generate them.
-          </div>
-        )}
-      </div>
+      {playlists.length > 0 ? (
+        <OptionWheel
+          key={`${view}-${selectedId ?? 'none'}-${playlists.length}`}
+          items={playlistNames}
+          defaultSelected={selectedIndex}
+          onChange={handleLibraryChange}
+          className="library-wheel"
+          textColor="var(--text-secondary)"
+          activeColor="var(--accent)"
+          fontSize={1.05}
+          spacing={1.8}
+          curve={0.9}
+          tilt={7}
+          blur={1.25}
+          fade={0.2}
+          inset={28}
+          smoothing={180}
+          draggable
+        />
+      ) : (
+        <div className="library-wheel-empty">
+          No playlists yet.<br />Run the nightly pipeline to generate them.
+        </div>
+      )}
     </aside>
   )
 }

@@ -1,0 +1,65 @@
+.option-wheel {
+  --option-wheel-text: #8e8e8e;
+  --option-wheel-active: #ffffff;
+  --option-wheel-font-size: 1.1rem;
+  --option-wheel-inset: 32px;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  outline: none;
+}
+
+.option-wheel:focus-visible {
+  box-shadow: inset 0 0 0 2px rgba(29, 185, 84, 0.55);
+}
+
+.option-wheel--dragging { cursor: grabbing; }
+
+.option-wheel__item {
+  position: absolute;
+  top: 50%;
+  left: var(--option-wheel-inset);
+  white-space: nowrap;
+  font-size: var(--option-wheel-font-size);
+  line-height: 1;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--option-wheel-active) calc(var(--option-wheel-progress, 0) * 100%), var(--option-wheel-text));
+  transform-origin: left center;
+  cursor: pointer;
+  will-change: transform, opacity, filter;
+}
+
+.option-wheel__item--selected {
+  font-weight: 700;
+}
+
+.option-wheel--right .option-wheel__item {
+  left: auto;
+  right: var(--option-wheel-inset);
+  transform-origin: right center;
+}
+
+.library-wheel {
+  min-height: 260px;
+  flex: 1;
+  margin: 0 4px 8px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, rgba(255,255,255,0.025), transparent 75%);
+}
+
+.library-wheel-empty {
+  margin: 0 20px;
+  padding: 26px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .library-wheel { min-height: 220px; }
+}
