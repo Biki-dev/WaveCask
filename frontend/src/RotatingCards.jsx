@@ -139,7 +139,7 @@ export default function RotatingCards({
   }
 
   const handlePointerDown = event => {
-    if (!draggable || count < 2) return
+    if (!draggable || count < 2 || event.target.closest('button')) return
     event.currentTarget.setPointerCapture?.(event.pointerId)
     dragRef.current = {
       pointerId: event.pointerId,
@@ -191,16 +191,21 @@ export default function RotatingCards({
     }
   }
 
+  const orbitX = Math.max(285, radius * 1.28)
+  const orbitY = Math.max(155, radius * 0.72)
   const cardElements = cards.map((card, index) => {
-    const angle = index * step - rotation
+    const angle = index * step - rotation - 90
+    const radians = angle * Math.PI / 180
+    const depth = (Math.sin(radians) + 1) / 2
     const shortestAngle = Math.abs((((angle + 180) % 360) + 360) % 360 - 180)
     const isActive = index === activeIndex
+    const scale = 0.82 + depth * 0.18
     const style = {
       width: cardWidth,
       height: cardHeight,
-      transform: `translate(-50%, -50%) rotateY(${angle}deg) translateZ(${radius}px)`,
-      zIndex: isActive ? 40 : Math.max(1, Math.round(30 - shortestAngle / 8)),
-      opacity: shortestAngle > 150 ? 0.28 : 1,
+      transform: `translate(-50%, -50%) translate3d(${Math.cos(radians) * orbitX}px, ${Math.sin(radians) * orbitY}px, 0) rotate(${angle + 90}deg) scale(${scale})`,
+      zIndex: isActive ? 40 : Math.max(1, Math.round(30 + depth * 20)),
+      opacity: shortestAngle > 165 ? 0.46 : 1,
     }
 
     return (
