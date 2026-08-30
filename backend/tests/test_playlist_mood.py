@@ -15,6 +15,7 @@ from src.services.playlist_mood import (
     select_diverse_mood_rows,
 )
 from src.services.playlist_service import (
+    _find_playlist_by_identity,
     create_mood_playlists,
     replace_playlist_from_rows,
 )
@@ -149,6 +150,29 @@ class TestMoodScoringHelpers:
         updated = db_session.query(models.Playlist).filter_by(id=playlist.id).first()
         assert updated is not None
         assert len(updated.tracks) == 0
+
+
+class TestMixPlaylistIdentity:
+    def test_monthly_playlist_reuses_existing_dated_playlist(self, db_session):
+        existing = models.Playlist(
+            name="August 2026 Mix - 2026-08-29",
+            window_type="month",
+            window_label="August 2026 Mix",
+        )
+        db_session.add(existing)
+        db_session.flush()
+        existing_id = existing.id
+
+        found = _find_playlist_by_identity(
+            db_session,
+            name="August 2026 Mix",
+            window_type="month",
+            window_label="August 2026 Mix",
+        )
+
+        assert found.id == existing_id
+        assert found.name == "August 2026 Mix"
+        assert db_session.query(models.Playlist).filter_by(window_type="month").count() == 1
 
 
 class TestIntegrationMoodPlaylist:

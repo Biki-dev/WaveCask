@@ -34,6 +34,23 @@ logger = logging.getLogger(__name__)
 
 
 def _find_playlist_by_identity(db: Session, *, name: str, window_type: str, window_label: str):
+    # Monthly mix names used to include the generation date, so the same
+    # calendar month could create a new playlist every night. The window label
+    # is the stable identity for a month; keep the name only as a display field.
+    if window_type == "month":
+        playlist = (
+            db.query(models.Playlist)
+            .filter(
+                models.Playlist.window_type == window_type,
+                models.Playlist.window_label == window_label,
+            )
+            .order_by(models.Playlist.created_at.desc(), models.Playlist.id.desc())
+            .first()
+        )
+        if playlist is not None and playlist.name != name:
+            playlist.name = name
+        return playlist
+
     return (
         db.query(models.Playlist)
         .filter(

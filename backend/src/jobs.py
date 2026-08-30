@@ -192,7 +192,7 @@ def classify_tracks_nightly():
                 "day_of_week": now.isoweekday() % 7,
             },
             {
-                "name": f"{now.strftime('%B %Y')} Mix - {now.date().isoformat()}",
+                "name": f"{now.strftime('%B %Y')} Mix",
                 "window_type": "month",
                 "month": now.month,
                 "year": now.year,
