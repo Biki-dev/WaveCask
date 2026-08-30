@@ -51,13 +51,13 @@ export function fmtScore(score) {
 }
 
 export const PLAYLIST_TYPE_COLOR = {
-  today:          '#1a472a',
-  day_of_week:    '#2d1e3a',
-  month:          '#1c3a2d',
-  context:        '#1c2b4a',
-  all_time:       '#3a2a1c',
-  mood:           '#2d1e3a',
-  recommendation: '#3a1e1e',
+  today:          '#62ee93',
+  day_of_week:    '#b27edf',
+  month:          '#78dcb1',
+  context:        '#5e8be4',
+  all_time:       '#e4ab79',
+  mood:           '#b580e4',
+  recommendation: '#e17f7f',
 }
 
 export const PLAYLIST_TYPE_LABEL = {

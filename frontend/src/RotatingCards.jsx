@@ -239,6 +239,7 @@ export function PlaylistCarouselSection({ playlists, onSelect, onPlay }) {
           display: 'flex',
           flexDirection: 'column',
           position: 'relative',
+          height: '100%'
         }}
       >
         {/* Type label — upper area */}
@@ -272,7 +273,6 @@ export function PlaylistCarouselSection({ playlists, onSelect, onPlay }) {
           style={{
             position: 'absolute',
             zIndex: 50,
-            padding: '0 20px 24px',
             alignItems: 'center',
             textAlign: 'center',
           }}
@@ -282,7 +282,7 @@ export function PlaylistCarouselSection({ playlists, onSelect, onPlay }) {
             style={{
               position: 'relative',
               transform: 'none',
-              left: '400px',
+              left: '450px',
               top: '450px',
               margin: '0 auto',
               width: 'min(360px, 92%)',

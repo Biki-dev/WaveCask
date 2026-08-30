@@ -183,11 +183,11 @@ def classify_tracks_nightly():
         now = datetime.now()
         windows = [
             {
-                "name": f"Today Mix - {now.date().isoformat()}",
+                "name": f"Today Mix ",
                 "window_type": "today",
             },
             {
-                "name": f"{now.strftime('%A')} Mix - {now.date().isoformat()}",
+                "name": f"{now.strftime('%A')} Mix",
                 "window_type": "day_of_week",
                 "day_of_week": now.isoweekday() % 7,
             },

@@ -14,7 +14,7 @@ export default function HomePage({ playlists, onSelect }) {
   }
 
   return (
-     <div className="home-page">
+     <div>
         {/* ONE unified carousel for every playlist */}
         {playlists.length > 0 && (
           <PlaylistCarouselSection
