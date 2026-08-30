@@ -1,5 +1,5 @@
-import { fmtDuration } from './api'
 import { usePlayer } from './PlayerContext'
+import ElasticSlider from './ElasticSlider'
 import {
   IconPlay, IconPause, IconSkipNext, IconSkipPrev,
   IconShuffle, IconRepeat, IconRepeatOne,
@@ -113,16 +113,17 @@ export default function PlayerBar() {
         >
           {muted || volume === 0 ? <IconVolumeMute size={20} /> : <IconVolume size={20} />}
         </button>
-        <div className="volume-control">
-          <input
-            type="range"
-            min="0" max="1" step="0.01"
-            value={muted ? 0 : volume}
-            onChange={e => setVolume(parseFloat(e.target.value))}
-            style={{ width: 80, accentColor: 'var(--accent)' }}
-            title="Volume"
-          />
-        </div>
+        <ElasticSlider
+          className="player-volume-slider"
+          startingValue={0}
+          defaultValue={muted ? 0 : volume * 100}
+          maxValue={100}
+          isStepped
+          stepSize={1}
+          leftIcon={<IconVolumeMute size={16} />}
+          rightIcon={<IconVolume size={16} />}
+          onChange={value => setVolume(value / 100)}
+        />
       </div>
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
